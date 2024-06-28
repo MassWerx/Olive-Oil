@@ -177,20 +177,6 @@ def get_feature_reduction(feature_reduce_choice):
             quit()
     return reduction_fun
 
-
-import pandas as pd
-import numpy as np
-from sklearn.model_selection import RepeatedKFold, GridSearchCV, PredefinedSplit
-from sklearn.preprocessing import StandardScaler
-from sklearn.pipeline import Pipeline
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
-from scipy.stats import pearsonr, spearmanr
-import os
-import shutil
-from pathlib import Path
-from tempfile import mkdtemp
-from joblib import Memory
-
 def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
     X = ms_info['X']
     y = ms_info['y']
@@ -308,8 +294,9 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
 
         # np.array(r2_score_repeat) converts this list of lists into a numpy array where each row corresponds to a repeat and each column corresponds to a fold.
         r2_score_repeat = np.array(r2_score_repeat)
-        # calculates the mean across each row (repeat), resulting in mean_R2_rep, which contains the mean R^2 score for each repeat.
+        # calculates the mean across each row (repeat), resulting in mean_R2_rep, which contains the mean R2^2 score for each repeat.
         mean_R2_rep = np.mean(r2_score_repeat, axis=1)
+        # calculates the standard deviation across each row (repeat), resulting in std_R2_rep, which contains the standard deviation of R2^2 scores for each repeat.
         std_R2_rep = np.std(r2_score_repeat, axis=1)
 
         mean_Pearson = np.mean(all_pearson_corrs)
@@ -352,6 +339,7 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
             os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
 
         create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{name}_{ms_file_name}'), dirpath)
+
 
 
 seed = 1234546
