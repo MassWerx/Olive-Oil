@@ -177,6 +177,7 @@ def get_feature_reduction(feature_reduce_choice):
             quit()
     return reduction_fun
 
+
 def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
     X = ms_info['X']
     y = ms_info['y']
@@ -222,6 +223,7 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
         for repeat in range(10):
             print(f'Repeat {repeat + 1}/10')
             r2_repeat = []
+
             for fold_idx in range(5):
                 outer_fold = outer_fold_indices[repeat * 5 + fold_idx]
                 train_idx, test_idx = outer_fold
@@ -256,11 +258,11 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
 
                 # Store y_test and y_pred
                 split_data = pd.DataFrame({
+                    'repeat_idx': repeat,
+                    'split_idx': fold_idx,
                     'y_test': y_test,
                     'y_pred': y_pred,
-                    'r2_score': r2_score_pre_fold,
-                    'repeat_idx': repeat,
-                    'split_idx': fold_idx
+                    'r2_score': r2_score_pre_fold
                 })
                 all_splits_data.append(split_data)
 
@@ -280,9 +282,9 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
                     'features': selected_features
                 })
                 all_features_data.append(features_data)
-                r2_score_repeat.append(r2_repeat)
 
-
+            # Done with inner for loop
+            r2_score_repeat.append(r2_repeat)
 
         mean_MSE = np.mean(all_mse)
         std_MSE = np.std(all_mse)
@@ -291,13 +293,23 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
         mean_R2 = np.mean(all_r2_scores)
         std_R2 = np.std(all_r2_scores)
 
-
         # np.array(r2_score_repeat) converts this list of lists into a numpy array where each row corresponds to a repeat and each column corresponds to a fold.
         r2_score_repeat = np.array(r2_score_repeat)
         # calculates the mean across each row (repeat), resulting in mean_R2_rep, which contains the mean R2^2 score for each repeat.
         mean_R2_rep = np.mean(r2_score_repeat, axis=1)
         # calculates the standard deviation across each row (repeat), resulting in std_R2_rep, which contains the standard deviation of R2^2 scores for each repeat.
         std_R2_rep = np.std(r2_score_repeat, axis=1)
+
+        # Calculate overall mean R2 across all repeats
+        overall_mean_R2 = np.mean(mean_R2_rep)
+        """
+        When calculating the overall standard deviation across multiple repeats of 𝑅2^2
+        scores, you typically cannot directly use np.std due to the propagation of error and the fact that we're dealing with 
+        standard deviations of means from different samples (repeats in this case). Instead, you typically use the root mean 
+        square method to combine standard deviations from different samples
+        """
+        # Calculate overall std R2 across all repeats
+        overall_std_R2 = np.sqrt(np.mean(std_R2_rep ** 2))  # Using root mean square formula for std
 
         mean_Pearson = np.mean(all_pearson_corrs)
         std_Pearson = np.std(all_pearson_corrs)
@@ -311,11 +323,13 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
 
         # Combine all splits data into a single DataFrame and save to CSV
         all_splits_data_df = pd.concat(all_splits_data, ignore_index=True)
-        all_splits_data_df.to_csv(os.path.join(current_working_dir, f'output_{name}/splits_data_{name}.csv'), index=False)
+        all_splits_data_df.to_csv(os.path.join(current_working_dir, f'output_{name}/splits_data_{name}.csv'),
+                                  index=False)
 
         # Combine all features data into a single DataFrame and save to CSV
         all_features_data_df = pd.concat(all_features_data, ignore_index=True)
-        all_features_data_df.to_csv(os.path.join(current_working_dir, f'output_{name}/features_data_{name}.csv'), index=False)
+        all_features_data_df.to_csv(os.path.join(current_working_dir, f'output_{name}/features_data_{name}.csv'),
+                                    index=False)
 
         with open(os.path.join(current_working_dir, f'output_{name}/metrics_{name}.txt'), 'w') as f:
             f.write(f'Mean MSE: {mean_MSE}\n')
@@ -326,6 +340,9 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
             f.write(f'Standard deviation for R2: {std_R2}\n')
             f.write(f'Mean R2 per repeat: {mean_R2_rep}\n')
             f.write(f'Standard deviation for R2 per repeat: {std_R2_rep}\n')
+            # Adding overall summary
+            f.write(f'Overall Mean R2 from each repeat: {overall_mean_R2}\n')
+            f.write(f'Overall Std R2 from each repeat: {overall_std_R2}\n')
             f.write(f'Mean Pearson Correlation: {mean_Pearson}\n')
             f.write(f'Standard deviation for Pearson Correlation: {std_Pearson}\n')
             f.write(f'Mean Spearman Correlation: {mean_Spearman}\n')
@@ -339,7 +356,6 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
             os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
 
         create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{name}_{ms_file_name}'), dirpath)
-
 
 
 seed = 1234546
