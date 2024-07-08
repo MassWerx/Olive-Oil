@@ -21,6 +21,7 @@ from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_scor
 from sklearn.svm import SVC
 import tensorflow as tf
 from joblib import Memory
+from xgboost import XGBRegressor
 
 seed = 123456
 
@@ -222,11 +223,14 @@ class MyKerasClf:
 
 
 def get_models(y):
-    list_of_models = [
-        ('GradientBoosting', GradientBoostingClassifier(random_state=seed), {
-            'classifier__n_estimators': [100, 200, 300],
-            'classifier__learning_rate': [0.01, 0.1, 0.2],
-            'classifier__max_depth': [3, 5, 7]
+    list_of_models_long = [
+        ('SVM', SVC(probability=True, random_state=seed), {
+            'classifier__C': [0.1, 1, 10],
+            'classifier__kernel': ['linear', 'rbf']
+        }),
+        ('AdaBoost', AdaBoostClassifier(random_state=seed), {
+            'classifier__n_estimators': [50, 100, 200],
+            'classifier__learning_rate': [0.01, 0.1, 1]
         }),
         ('LogisticRegression', LogisticRegression(max_iter=1000, random_state=seed), {
             'classifier__C': [0.1, 1, 10],
@@ -238,13 +242,10 @@ def get_models(y):
             'classifier__weights': ['uniform', 'distance'],
             'classifier__metric': ['euclidean', 'manhattan']
         }),
-        ('SVM', SVC(probability=True, random_state=seed), {
-            'classifier__C': [0.1, 1, 10],
-            'classifier__kernel': ['linear', 'rbf']
-        }),
-        ('AdaBoost', AdaBoostClassifier(random_state=seed), {
-            'classifier__n_estimators': [50, 100, 200],
-            'classifier__learning_rate': [0.01, 0.1, 1]
+        ('GradientBoosting', GradientBoostingClassifier(random_state=seed), {
+            'classifier__n_estimators': [100, 200, 300],
+            'classifier__learning_rate': [0.01, 0.1, 0.2],
+            'classifier__max_depth': [3, 5, 7]
         }),
         ('RandomForest', RandomForestClassifier(n_jobs=-1, random_state=seed), {
             'classifier__n_estimators': [100, 200, 300],
@@ -252,7 +253,19 @@ def get_models(y):
             'classifier__min_samples_split': [2, 5, 10],
             'classifier__min_samples_leaf': [1, 2, 4]
         }),
-        ('TensorFlow', MyKerasClf(n_classes=len(np.unique(y)), seed=1), {
+        ('TensorFlow', MyKerasClf(n_classes=len(np.unique(y)), seed=seed), {
+            'classifier__learn_rate': [0.001, 0.01],
+            'classifier__weight_constraint': [0, 1]
+        })
+    ]
+    list_of_models = [
+        ('RandomForest', RandomForestClassifier(n_jobs=-1, random_state=seed), {
+            'classifier__n_estimators': [100, 200, 300],
+            'classifier__max_depth': [None, 10, 20, 30],
+            'classifier__min_samples_split': [2, 5, 10],
+            'classifier__min_samples_leaf': [1, 2, 4]
+        }),
+        ('TensorFlow', MyKerasClf(n_classes=len(np.unique(y)), seed=seed), {
             'classifier__learn_rate': [0.001, 0.01],
             'classifier__weight_constraint': [0, 1]
         })
@@ -271,9 +284,6 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
 
     outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
 
-    # Save the outer fold indices for all repeats
-    outer_fold_indices = [(train_idx, test_idx) for train_idx, test_idx in outer_cv.split(X, y)]
-
     overall_results = []
 
     for name, model, param_grid in list_of_models:
@@ -285,6 +295,15 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
             ('classifier', model)
         ], memory=memory)
 
+        # Perform grid search using the entire data
+        grid_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=1, random_state=seed)
+        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='accuracy')
+        grid_search.fit(X, y)
+        best_params = grid_search.best_params_
+
+        # Use the best parameters for the model
+        pipeline.set_params(**best_params)
+
         all_y_true = []
         all_y_scores = []
         all_balanced_accuracies = []
@@ -294,65 +313,45 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
         all_splits_data = []  # Store data for each split
         all_features_data = []  # Store features for each split
 
-        for repeat in range(10):
-            print(f'Repeat {repeat + 1}/10')
-            for fold_idx in range(5):
-                outer_fold = outer_fold_indices[repeat * 5 + fold_idx]
-                train_idx, test_idx = outer_fold
-                X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-                y_train, y_test = y[train_idx], y[test_idx]
+        for train_idx, test_idx in outer_cv.split(X, y):
+            X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+            y_train, y_test = y[train_idx], y[test_idx]
 
-                inner_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=1, random_state=seed)
-                inner_folds = list(inner_cv.split(X_train, y_train))
-                inner_fold_indices_flat = []
-                for fold_inner_idx, (train_inner_idx, val_idx) in enumerate(inner_folds):
-                    inner_fold_indices_flat.extend([fold_inner_idx] * len(val_idx))
-                inner_fold_indices_flat = np.array(inner_fold_indices_flat)
+            best_model =  pipeline.fit(X_train, y_train)
+            y_pred = best_model.predict(X_test)
+            y_score = best_model.predict_proba(X_test)[:, 1]
 
-                ps = PredefinedSplit(inner_fold_indices_flat)
+            all_y_true.extend(y_test)
+            all_y_scores.extend(y_score)
+            all_balanced_accuracies.append(balanced_accuracy_score(y_test, y_pred))
+            all_recalls.append(recall_score(y_test, y_pred))
+            all_f1_scores.append(f1_score(y_test, y_pred))
+            all_precisions.append(precision_score(y_test, y_pred))
 
-                grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=ps, scoring='accuracy')
-                grid_search.fit(X_train, y_train)
+            # Save features for the current fold
+            # features_for_fold = best_model.named_steps['Reduction'].transform(X_test)
+            # save_features_for_fold(features_for_fold, fold_idx, output_dir)
+            # Store y_test and y_pred
+            split_data = pd.DataFrame({
+                'y_test': y_test,
+                'y_pred': y_pred,
+            })
+            all_splits_data.append(split_data)
 
-                best_model = grid_search.best_estimator_
-                y_pred = best_model.predict(X_test)
-                y_score = best_model.predict_proba(X_test)[:, 1]
+            # Store features used for this split
+            if hasattr(best_model.named_steps['Reduction'], 'support_'):
+                selected_features = [features[i] for i in range(len(features)) if
+                                     best_model.named_steps['Reduction'].support_[i]]
+            elif hasattr(best_model.named_steps['Reduction'], 'selected_features_'):
+                selected_features = [features[i] for i in range(len(features)) if
+                                     best_model.named_steps['Reduction'].selected_features_[i]]
+            else:
+                selected_features = features  # Fallback if no feature selection
 
-                all_y_true.extend(y_test)
-                all_y_scores.extend(y_score)
-                all_balanced_accuracies.append(balanced_accuracy_score(y_test, y_pred))
-                all_recalls.append(recall_score(y_test, y_pred))
-                all_f1_scores.append(f1_score(y_test, y_pred))
-                all_precisions.append(precision_score(y_test, y_pred))
-
-                # Save features for the current fold
-                # features_for_fold = best_model.named_steps['Reduction'].transform(X_test)
-                # save_features_for_fold(features_for_fold, fold_idx, output_dir)
-                # Store y_test and y_pred
-                split_data = pd.DataFrame({
-                    'repeat_idx': repeat,
-                    'split_idx': fold_idx,
-                    'y_test': y_test,
-                    'y_pred': y_pred,
-                })
-                all_splits_data.append(split_data)
-
-                # Store features used for this split
-                if hasattr(best_model.named_steps['Reduction'], 'support_'):
-                    selected_features = [features[i] for i in range(len(features)) if
-                                         best_model.named_steps['Reduction'].support_[i]]
-                elif hasattr(best_model.named_steps['Reduction'], 'selected_features_'):
-                    selected_features = [features[i] for i in range(len(features)) if
-                                         best_model.named_steps['Reduction'].selected_features_[i]]
-                else:
-                    selected_features = features  # Fallback if no feature selection
-
-                features_data = pd.DataFrame({
-                    'repeat_idx': repeat,
-                    'split_idx': fold_idx,
-                    'features': selected_features
-                })
-                all_features_data.append(features_data)
+            features_data = pd.DataFrame({
+                'features': selected_features
+            })
+            all_features_data.append(features_data)
 
         # Calculate mean and standard deviation for metrics
         mean_balanced_accuracy = np.mean(all_balanced_accuracies)
