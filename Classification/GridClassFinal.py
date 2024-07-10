@@ -17,7 +17,8 @@ import argparse
 import random
 import shutil
 import plotly.express as px
-from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_score, f1_score, precision_score
+from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_score, f1_score, precision_score, \
+    accuracy_score
 from sklearn.svm import SVC
 import tensorflow as tf
 from joblib import Memory
@@ -27,12 +28,15 @@ seed = 123456
 
 # Get the current working directory
 current_working_dir = os.getcwd()
+
+
 def create_zip_file_output(output_file_name, base_dir):
     with ZipFile(f'{output_file_name}.zip', 'w') as zipObj:
         for folderName, subfolders, filenames in os.walk(base_dir):
             for filename in filenames:
                 file_path = os.path.join(folderName, filename)
                 zipObj.write(file_path, basename(file_path))
+
 
 def get_feature_reduction(feature_reduce_choice):
     reduction_fun = None
@@ -223,7 +227,7 @@ class MyKerasClf:
 
 
 def get_models(y):
-    list_of_models_long = [
+    list_of_models = [
         ('SVM', SVC(probability=True, random_state=seed), {
             'classifier__C': [0.1, 1, 10],
             'classifier__kernel': ['linear', 'rbf']
@@ -253,23 +257,12 @@ def get_models(y):
             'classifier__min_samples_split': [2, 5, 10],
             'classifier__min_samples_leaf': [1, 2, 4]
         }),
-        ('TensorFlow', MyKerasClf(n_classes=len(np.unique(y)), seed=seed), {
+        ('ANN', MyKerasClf(n_classes=len(np.unique(y)), seed=seed), {
             'classifier__learn_rate': [0.001, 0.01],
             'classifier__weight_constraint': [0, 1]
         })
     ]
-    list_of_models = [
-        ('RandomForest', RandomForestClassifier(n_jobs=-1, random_state=seed), {
-            'classifier__n_estimators': [100, 200, 300],
-            'classifier__max_depth': [None, 10, 20, 30],
-            'classifier__min_samples_split': [2, 5, 10],
-            'classifier__min_samples_leaf': [1, 2, 4]
-        }),
-        ('TensorFlow', MyKerasClf(n_classes=len(np.unique(y)), seed=seed), {
-            'classifier__learn_rate': [0.001, 0.01],
-            'classifier__weight_constraint': [0, 1]
-        })
-    ]
+
     return list_of_models
 
 
@@ -281,8 +274,6 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
     output_dir = os.path.join(current_working_dir, 'output')
     cachedir = mkdtemp()
     memory = Memory(location=cachedir, verbose=0)
-
-    outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
 
     overall_results = []
 
@@ -304,54 +295,67 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
         # Use the best parameters for the model
         pipeline.set_params(**best_params)
 
-        all_y_true = []
-        all_y_scores = []
+        all_accuracies = []
         all_balanced_accuracies = []
         all_recalls = []
         all_f1_scores = []
         all_precisions = []
+        all_roc_data = []
         all_splits_data = []  # Store data for each split
         all_features_data = []  # Store features for each split
 
-        for train_idx, test_idx in outer_cv.split(X, y):
-            X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-            y_train, y_test = y[train_idx], y[test_idx]
+        outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=1, random_state=seed)
 
-            best_model =  pipeline.fit(X_train, y_train)
-            y_pred = best_model.predict(X_test)
-            y_score = best_model.predict_proba(X_test)[:, 1]
+        for repeat in range(10):
+            print(f'Repeat {repeat + 1}/10')
 
-            all_y_true.extend(y_test)
-            all_y_scores.extend(y_score)
-            all_balanced_accuracies.append(balanced_accuracy_score(y_test, y_pred))
-            all_recalls.append(recall_score(y_test, y_pred))
-            all_f1_scores.append(f1_score(y_test, y_pred))
-            all_precisions.append(precision_score(y_test, y_pred))
+            y_true_all = []
+            y_pred_all = []
 
-            # Save features for the current fold
-            # features_for_fold = best_model.named_steps['Reduction'].transform(X_test)
-            # save_features_for_fold(features_for_fold, fold_idx, output_dir)
-            # Store y_test and y_pred
-            split_data = pd.DataFrame({
-                'y_test': y_test,
-                'y_pred': y_pred,
-            })
-            all_splits_data.append(split_data)
+            for train_idx, test_idx in outer_cv.split(X, y):
+                X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+                y_train, y_test = y[train_idx], y[test_idx]
 
-            # Store features used for this split
-            if hasattr(best_model.named_steps['Reduction'], 'support_'):
-                selected_features = [features[i] for i in range(len(features)) if
-                                     best_model.named_steps['Reduction'].support_[i]]
-            elif hasattr(best_model.named_steps['Reduction'], 'selected_features_'):
-                selected_features = [features[i] for i in range(len(features)) if
-                                     best_model.named_steps['Reduction'].selected_features_[i]]
-            else:
-                selected_features = features  # Fallback if no feature selection
+                best_model = pipeline.fit(X_train, y_train)
+                y_pred = best_model.predict(X_test)
 
-            features_data = pd.DataFrame({
-                'features': selected_features
-            })
-            all_features_data.append(features_data)
+                y_true_all.extend(y_test)
+                y_pred_all.extend(y_pred)
+
+                # Store y_test and y_pred
+                split_data = pd.DataFrame({
+                    'y_test': y_test,
+                    'y_pred': y_pred,
+                })
+                all_splits_data.append(split_data)
+
+                # Store features used for this split
+                if hasattr(best_model.named_steps['Reduction'], 'support_'):
+                    selected_features = [features[i] for i in range(len(features)) if
+                                         best_model.named_steps['Reduction'].support_[i]]
+                elif hasattr(best_model.named_steps['Reduction'], 'selected_features_'):
+                    selected_features = [features[i] for i in range(len(features)) if
+                                         best_model.named_steps['Reduction'].selected_features_[i]]
+                else:
+                    selected_features = features  # Fallback if no feature selection
+
+                features_data = pd.DataFrame({
+                    'features': selected_features
+                })
+                all_features_data.append(features_data)
+
+            accuracy = accuracy_score(y_true_all, y_pred_all)
+            balanced_accuracy = balanced_accuracy_score(y_true_all, y_pred_all)
+            recall = recall_score(y_true_all, y_pred_all)
+            f1 = f1_score(y_true_all, y_pred_all)
+            precision = precision_score(y_true_all, y_pred_all)
+
+            all_accuracies.append(accuracy)
+            all_balanced_accuracies.append(balanced_accuracy)
+            all_recalls.append(recall)
+            all_f1_scores.append(f1)
+            all_precisions.append(precision)
+
 
         # Calculate mean and standard deviation for metrics
         mean_balanced_accuracy = np.mean(all_balanced_accuracies)
@@ -362,6 +366,8 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
         std_f1 = np.std(all_f1_scores)
         mean_precision = np.mean(all_precisions)
         std_precision = np.std(all_precisions)
+        mean_score = np.mean(all_accuracies)
+        std_score = np.std(all_accuracies)
 
         dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
         if dirpath.exists() and dirpath.is_dir():
@@ -376,43 +382,30 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
         all_features_data_df = pd.concat(all_features_data, ignore_index=True)
         all_features_data_df.to_csv(f'{dirpath}/features_data_{name}.csv', index=False)
 
-        fpr, tpr, thresholds = roc_curve(all_y_true, all_y_scores)
-        roc_auc = auc(fpr, tpr)
+        # Combine ROC data
+        """fpr_all, tpr_all, roc_auc_all = zip(*all_roc_data)
+        mean_fpr = np.mean(fpr_all, axis=0)
+        mean_tpr = np.mean(tpr_all, axis=0)
+        mean_roc_auc = np.mean(roc_auc_all)"""
 
-        """"# Save metrics and ROC data
-        model_output_dir = os.path.join(output_dir, name)
-        os.makedirs(model_output_dir, exist_ok=True)"""
-
-        roc_data = pd.DataFrame({'fpr': fpr, 'tpr': tpr, 'thresholds': thresholds})
-        roc_data.to_csv(f'{dirpath}/roc_data_{name}.csv', index=False)
+        #roc_data = pd.DataFrame({'fpr': mean_fpr, 'tpr': mean_tpr})
+        #roc_data.to_csv(f'{dirpath}/roc_data_{name}.csv', index=False)
 
         with open(f'{dirpath}/metrics_{name}.txt', 'w') as f:
-            f.write(f'Mean balanced accuracy: {mean_balanced_accuracy}\n')
-            f.write(f'Standard deviation of balanced accuracy: {std_balanced_accuracy}\n')
-            f.write(f'Mean recall: {mean_recall}\n')
-            f.write(f'Standard deviation of recall: {std_recall}\n')
-            f.write(f'Mean F1 score: {mean_f1}\n')
-            f.write(f'Standard deviation of F1 score: {std_f1}\n')
-            f.write(f'Mean precision: {mean_precision}\n')
-            f.write(f'Standard deviation of precision: {std_precision}\n')
-            f.write(f'AUC: {roc_auc}\n')
-            f.write(f'Best parameters: {grid_search.best_params_}\n')
+            #f.write(f'Mean balanced accuracy: {mean_balanced_accuracy}\n')
+            f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
+            f.write(f'Bal.Acc.sd: {std_balanced_accuracy}\n')
+            f.write(f'Recall.avg: {mean_recall}\n')
+            f.write(f'Recall.sd: {std_recall}\n')
+            f.write(f'Precision.avg: {mean_precision}\n')
+            f.write(f'Precision.sd: {std_precision}\n')
+            f.write(f'F1.avg: {mean_f1}\n')
+            f.write(f'F1.sd: {std_f1}\n')
+            f.write(f'F1.avg: {mean_score}\n')
+            f.write(f'F1.sd: {std_score}\n')
 
-        # ROC plot
-        fig = px.area(
-            x=fpr, y=tpr,
-            title=f'ROC Curve (AUC={roc_auc:.2f})',
-            labels=dict(x='False Positive Rate', y='True Positive Rate'),
-            width=700, height=500
-        )
-        fig.add_shape(
-            type='line', line=dict(dash='dash'),
-            x0=0, x1=1, y0=0, y1=1
-        )
-        fig.update_yaxes(scaleanchor="x", scaleratio=1)
-        fig.update_xaxes(constrain='domain')
-        fig.write_image(f'{dirpath}/{name}_ROC.png')
-        fig.show()
+            # f.write(f'Mean AUC: {mean_roc_auc}\n')
+            # f.write(f'Best parameters: {grid_search.best_params_}\n')
 
         with open(f'{dirpath}/overall_{name}.txt', 'w') as f:
             f.write(f'Overall So Far: {overall_results}\n')
@@ -421,6 +414,8 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
             os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
 
         create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{name}_{ms_file_name}'), dirpath)
+
+    shutil.rmtree(cachedir)
 
 
 def main(ms_input_file, feature_reduce_choice):
