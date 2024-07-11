@@ -17,8 +17,7 @@ import argparse
 import random
 import shutil
 import plotly.express as px
-from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_score, f1_score, precision_score, \
-    accuracy_score
+from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_score, f1_score, precision_score, accuracy_score
 from sklearn.svm import SVC
 import tensorflow as tf
 from joblib import Memory
@@ -309,8 +308,8 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
         for repeat in range(10):
             print(f'Repeat {repeat + 1}/10')
 
-            y_true_all = []
-            y_pred_all = []
+            y_true_repeat = []
+            y_pred_repeat = []
 
             for train_idx, test_idx in outer_cv.split(X, y):
                 X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
@@ -319,8 +318,8 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
                 best_model = pipeline.fit(X_train, y_train)
                 y_pred = best_model.predict(X_test)
 
-                y_true_all.extend(y_test)
-                y_pred_all.extend(y_pred)
+                y_true_repeat.extend(y_test)
+                y_pred_repeat.extend(y_pred)
 
                 # Store y_test and y_pred
                 split_data = pd.DataFrame({
@@ -344,11 +343,11 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
                 })
                 all_features_data.append(features_data)
 
-            accuracy = accuracy_score(y_true_all, y_pred_all)
-            balanced_accuracy = balanced_accuracy_score(y_true_all, y_pred_all)
-            recall = recall_score(y_true_all, y_pred_all)
-            f1 = f1_score(y_true_all, y_pred_all)
-            precision = precision_score(y_true_all, y_pred_all)
+            accuracy = accuracy_score(y_true_repeat, y_pred_repeat)
+            balanced_accuracy = balanced_accuracy_score(y_true_repeat, y_pred_repeat)
+            recall = recall_score(y_true_repeat, y_pred_repeat)
+            f1 = f1_score(y_true_repeat, y_pred_repeat)
+            precision = precision_score(y_true_repeat, y_pred_repeat)
 
             all_accuracies.append(accuracy)
             all_balanced_accuracies.append(balanced_accuracy)
@@ -401,8 +400,8 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
             f.write(f'Precision.sd: {std_precision}\n')
             f.write(f'F1.avg: {mean_f1}\n')
             f.write(f'F1.sd: {std_f1}\n')
-            f.write(f'F1.avg: {mean_score}\n')
-            f.write(f'F1.sd: {std_score}\n')
+            f.write(f'acu.mean: {mean_score}\n')
+            f.write(f'acu.sd: {std_score}\n')
 
             # f.write(f'Mean AUC: {mean_roc_auc}\n')
             # f.write(f'Best parameters: {grid_search.best_params_}\n')
