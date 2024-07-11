@@ -609,7 +609,7 @@ def main(ms_input_file, feature_reduce_choice):
     print("Starting ... ")
     ms_file_name = Path(ms_input_file).stem
     df_file = load_data_from_file(ms_input_file, False)
-    file_idenfifier = 'Classification'
+    file_idenfifier = ''
     transpose_select = False
     feature_reduce_choice = feature_reduce_choice  # None #'Boruta' #'Boruta' #'Boruta'
     model_name = 'RandomForest'  # 'TensorFlow' #'RandomForest'#'RandomForest' #'GradientBoosting' #'SVM' #'ElasticNet'
