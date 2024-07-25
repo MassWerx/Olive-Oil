@@ -15,7 +15,7 @@ from sklearn.base import BaseEstimator, TransformerMixin
 from sklearn.ensemble import RandomForestRegressor, AdaBoostRegressor, GradientBoostingRegressor
 from sklearn.feature_selection import f_regression, SelectKBest, r_regression
 from sklearn.linear_model import ElasticNet, Lasso, Ridge, LinearRegression
-from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score, root_mean_squared_error
 from sklearn.model_selection import RepeatedKFold, GridSearchCV, PredefinedSplit
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -182,10 +182,8 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
-    seed = 123456
 
     current_working_dir = os.getcwd()
-
 
     # Store the full input X and y for debugging
     input_data = pd.DataFrame(X, columns=features)
@@ -218,21 +216,32 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
         # Use the best parameters for the model
         pipeline.set_params(**best_params)
 
-        all_mse = []
-        all_mae = []
-        all_r2_scores = []
-        all_mean_R2_rep = []
-        all_std_R2_rep = []
-        all_pearson_corrs = []
-        all_spearman_corrs = []
-        all_splits_data = []  # Store data for each split
-        all_features_data = []  # Store features for each split
-
         outer_cv = RepeatedKFold(n_splits=5, n_repeats=1, random_state=seed)
 
+
+        # Reserve
+        # mean_repeat_spearman = []  spearman_repeat.append(spearmanr(y_test, y_pred)[0])
+        # mean_MSE_repeat.append(mean_squared_error(y_test, y_pred))
+
+        # R Squared -- r2_score(y_test, y_pred)
+        all_R2_mean = []
+
+        # Root Mean Squared Error -- root_mean_squared_error(y_test, y_pred)
+        all_RMSE_mean = []
+
+        # MAE (mean absolute error)
+        all_MAE_mean = []
+
+        # Collect data for all repeats
+        results = []
+
         for repeat_idx in range(10):
+
             print(f'Repeat {repeat_idx + 1}/10')
-            r2_score_repeat = []  # Store R2 scores for each repeat
+            repeat_R2 = []  # Store R2 scores for each repeat
+            repeat_RMSE = []
+            repeat_MAE = []
+
             for train_idx, test_idx in outer_cv.split(X, y):
                 X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
                 y_train, y_test = y[train_idx], y[test_idx]
@@ -240,81 +249,33 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
                 best_model = pipeline.fit(X_train, y_train)
                 y_pred = best_model.predict(X_test)
 
+                repeat_R2.append(r2_score(y_test, y_pred))
+                repeat_RMSE.append(root_mean_squared_error(y_test, y_pred))
+                repeat_MAE.append(mean_absolute_error(y_test, y_pred))
 
-                mse = mean_squared_error(y_test, y_pred)
-                mae = mean_absolute_error(y_test, y_pred)
-                r2_score_pre_fold = r2_score(y_test, y_pred)
-                pearson_corr = pearsonr(y_test, y_pred)[0]
-                spearman_corr = spearmanr(y_test, y_pred)[0]
+                # mae = mean_absolute_error(y_test, y_pred)
+                # pearson_corr = pearsonr(y_test, y_pred)[0]
 
-                all_mse.append(mse)
-                all_mae.append(mae)
+            # Save R2 scores for this 5 fold repeat
+            all_R2_mean.append(np.mean(repeat_R2))
+            all_RMSE_mean.append(np.mean(repeat_RMSE))
+            all_MAE_mean.append(np.mean(repeat_MAE))
 
-                all_r2_scores.append(r2_score_pre_fold)
-                r2_score_repeat.append(r2_score_pre_fold)
+            # Collect all the results in a dictionary
+            results.append({
+                'Repeat': repeat_idx + 1,
+                 # 'R2 Scores': r2_score_repeat,
+                'Mean R2': all_R2_mean,
+                'Mean RMSE': all_RMSE_mean,
+                'Mean MAE': all_MAE_mean
+            })
 
-                all_pearson_corrs.append(pearson_corr)
-                all_spearman_corrs.append(spearman_corr)
-
-                # Store y_test and y_pred
-                split_data = pd.DataFrame({
-                    'y_test': y_test,
-                    'y_pred': y_pred,
-                    'r2_score': r2_score_pre_fold
-                })
-                all_splits_data.append(split_data)
-
-                # Store features used for this split
-                if hasattr(best_model.named_steps['Reduction'], 'support_'):
-                    selected_features = [features[i] for i in range(len(features)) if
-                                         best_model.named_steps['Reduction'].support_[i]]
-                elif hasattr(best_model.named_steps['Reduction'], 'selected_features_'):
-                    selected_features = [features[i] for i in range(len(features)) if
-                                         best_model.named_steps['Reduction'].selected_features_[i]]
-                else:
-                    selected_features = features  # Fallback if no feature selection
-
-                features_data = pd.DataFrame({
-                    'features': selected_features
-                })
-                all_features_data.append(features_data)
-
-            # Save R2 scores for this repeat
-            mean_R2_rep = np.mean(r2_score_repeat)
-            std_R2_rep = np.std(r2_score_repeat)
-            all_mean_R2_rep.append(mean_R2_rep)
-            all_std_R2_rep.append(std_R2_rep)
-
-            with open(os.path.join(current_working_dir, f'output_{name}/r2_scores_repeat_{repeat_idx + 1}.txt'),
-                      'w') as f:
-                f.write(f'R2 scores for repeat {repeat_idx + 1}: {r2_score_repeat}\n')
-                f.write(f'Mean R2 for repeat {repeat_idx + 1}: {mean_R2_rep}\n')
-                f.write(f'Standard deviation for repeat {repeat_idx + 1}: {std_R2_rep}\n')
-
-        mean_MSE = np.mean(all_mse)
-        std_MSE = np.std(all_mse)
-        mean_MAE = np.mean(all_mae)
-        std_MAE = np.std(all_mae)
-
-        mean_R2_rep = np.mean(all_mean_R2_rep)
-        std_R2_rep = np.std(all_mean_R2_rep)
-        mean_R2_all = np.mean(all_r2_scores)
-        std_R2_all = np.std(all_r2_scores)
-
-        mean_Pearson = np.mean(all_pearson_corrs)
-        std_Pearson = np.std(all_pearson_corrs)
-        mean_Spearman = np.mean(all_spearman_corrs)
-        std_Spearman = np.std(all_spearman_corrs)
-
-
-
-        all_splits_data_df = pd.concat(all_splits_data, ignore_index=True)
-        all_splits_data_df.to_csv(os.path.join(current_working_dir, f'output_{name}/splits_data_{name}.csv'),
-                                  index=False)
-
-        all_features_data_df = pd.concat(all_features_data, ignore_index=True)
-        all_features_data_df.to_csv(os.path.join(current_working_dir, f'output_{name}/features_data_{name}.csv'),
-                                    index=False)
+        mean_R2_rep = np.mean(all_R2_mean)
+        std_R2_rep = np.std(all_R2_mean)
+        mean_RMSE_all = np.mean(all_RMSE_mean)
+        std_RMSE_all = np.std(all_RMSE_mean)
+        mean_MAE_rep = np.mean(all_MAE_mean)
+        std_MAE_rep = np.std(all_MAE_mean)
 
         with open(os.path.join(current_working_dir, f'output_{name}/metrics_{name}.txt'), 'w') as f:
             #f.write(f'Mean MSE: {mean_MSE}\n')
@@ -323,10 +284,10 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
             #f.write(f'Standard deviation MAE: {std_MAE}\n')
             f.write(f'R.Sq.avg: {mean_R2_rep}\n')
             f.write(f'R.Sq.sd: {std_R2_rep}\n')
-            f.write(f'RMSE.avg: {mean_R2_all}\n')
-            f.write(f'RMSE.sd: {std_R2_all}\n')
-            f.write(f'rho.avg: {mean_Spearman}\n')
-            f.write(f'rho.sd: {std_Spearman}\n')
+            f.write(f'RMSE.avg: {mean_RMSE_all}\n')
+            f.write(f'RMSE.sd: {std_RMSE_all}\n')
+            f.write(f'MAE.avg: {mean_MAE_rep}\n')
+            f.write(f'MAE.sd: {std_MAE_rep}\n')
 
             #f.write(f'Overall Mean R2 from each repeat: {overall_mean_R2}\n')
             #f.write(f'Overall Std R2 from each repeat: {overall_std_R2}\n')
@@ -334,6 +295,11 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
             #f.write(f'Standard deviation Pearson Correlation: {std_Pearson}\n')
 
             #f.write(f'Best parameters: {best_params}\n')
+
+        # Convert the results list to a DataFrame
+        df_results = pd.DataFrame(results)
+        output_file = os.path.join(current_working_dir, f'output_{name}/all_repeats_results.csv')
+        df_results.to_csv(output_file, index=False)
 
         with open(os.path.join(current_working_dir, f'output_{name}/overall_{name}.txt'), 'w') as f:
             f.write(f'Overall So Far: {overall_results}\n')
@@ -346,9 +312,7 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
     shutil.rmtree(cachedir)
 
 
-
-
-seed = 1234546
+seed = None
 
 
 def main(ms_input_file, feature_reduce_choice):
