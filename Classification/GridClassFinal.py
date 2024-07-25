@@ -564,7 +564,8 @@ def run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
         all_splits_data = []  # Store data for each split
         all_features_data = []
         all_orig_data = []
-        all_orig_data.append( ["accuracy_score", "balanced_accuracy_score", "recall_score", "f1_score", "precision_score"])
+        all_orig_data.append(
+            ["accuracy_score", "balanced_accuracy_score", "recall_score", "f1_score", "precision_score"])
         all_repeat_mean_balanced_accuracies = []
         all_repeat_std_balanced_accuracies = []
         all_repeat_mean_recalls = []
@@ -604,7 +605,9 @@ def run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
                 repeat_f1_scores.append(f1_score(y_test, y_pred))
                 repeat_precisions.append(precision_score(y_test, y_pred))
 
-                all_orig_data.append([accuracy_score(y_test, y_pred), balanced_accuracy_score(y_test, y_pred), recall_score(y_test, y_pred), f1_score(y_test, y_pred), precision_score(y_test, y_pred)])
+                all_orig_data.append([accuracy_score(y_test, y_pred), balanced_accuracy_score(y_test, y_pred),
+                                      recall_score(y_test, y_pred), f1_score(y_test, y_pred),
+                                      precision_score(y_test, y_pred)])
 
                 # Store features used for this split
                 if hasattr(best_model.named_steps['Reduction'], 'support_'):
@@ -615,7 +618,6 @@ def run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
                                          best_model.named_steps['Reduction'].selected_features_[i]]
                 else:
                     selected_features = features  # Fallback if no feature selection
-
 
                 all_features_data.append(selected_features)
 
@@ -644,7 +646,6 @@ def run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
 
         dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
 
-
         """
         all_accuracies_data.append(accuracy_score(y_test, y_pred))  # Store features for each split
         all_balanced_accuracies_data.append(balanced_accuracy_score(y_test, y_pred))
@@ -655,8 +656,6 @@ def run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
 
         all_precisions_data_df = pd.DataFrame(all_orig_data)
         all_precisions_data_df.to_csv(f'{dirpath}/values_orig_{name}.csv', index=False)
-
-
 
         # Combine all features data into a single DataFrame and save to CSV
         all_features_data_df = pd.DataFrame(all_features_data)
@@ -706,24 +705,21 @@ def resetDirs(list_of_models):
         os.makedirs(dirpath)
 
 
-def main(ms_input_file, feature_reduce_choice, set_seed):
-    global seed
-    if set_seed == 'None':
-        seed = None
-    else:
-        seed = 123456
+seed = None
 
+
+def main(ms_input_file, feature_reduce_choice):
     ms_file_name = Path(ms_input_file).stem
     df_file = load_data_from_file(ms_input_file, False)
     ms_info = load_data_frame(df_file)
     list_of_models = get_models(ms_info['y'])
     resetDirs(list_of_models)
-    print(f"------> Starting orig {ms_input_file} / {feature_reduce_choice}... with {seed}")
+    """print(f"------> Starting orig {ms_input_file} / {feature_reduce_choice}... with {seed}")
     run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
     print(f"------> Starting CV {ms_input_file} / {feature_reduce_choice}... with {seed}")
     run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
     print(f"------> Starting CV_Score ... with {seed}")
-    run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
+    run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice)"""
     print(f"-------> Starting Loop ... with {seed}")
     run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
 
@@ -732,7 +728,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run regression models with feature reduction.')
     parser.add_argument('ms_input_file', type=str, help='Path to the input CSV file.')
     parser.add_argument('feature_reduce_choice', type=str, help='Choice of feature reduction method.')
-    parser.add_argument('set_seed', type=str, help='The Seed to use')
+    # parser.add_argument('set_seed', type=str, help='The Seed to use')
     args = parser.parse_args()
 
-    main(args.ms_input_file, args.feature_reduce_choice, args.set_seed)
+    main(args.ms_input_file, args.feature_reduce_choice)#, args.set_seed)
