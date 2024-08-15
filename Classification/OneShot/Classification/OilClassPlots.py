@@ -392,90 +392,91 @@ def plot_roc(results, model_name):
 
     fig.write_image(f'{output_dir}/{model_name}_ROC.png')
 
-
 def plot_shap_values(results, model_name, ms_file_name):
-    output_dir = os.path.join(current_working_dir, 'output')
+    output_dir = os.path.join(os.getcwd(), 'output')
     result_metrics, result_roc, result_shap = results
     shap_values_combined, X_test_combined, selected_features_final = result_shap
 
-    # Calculate mean SHAP values across all samples
-    mean_shap_values = np.mean(shap_values_combined, axis=0)
+    # Since you have binary classification, we'll use SHAP values for class 0 (or you could use class 1)
+    shap_values_combined = shap_values_combined[:, :, 0]
 
-    # Get indices of features with non-zero SHAP values
-    # nonzero_indices = np.where(mean_shap_values != 0)[0]
-    # We only want greater than 1.
-    nonzero_indices = np.where(np.abs(mean_shap_values) >= 0.000001)[0]
+    # Ensure consistency in the shapes before plotting
+    print(f"Shape of shap_values_combined: {shap_values_combined.shape}")
+    print(f"Shape of X_test_combined: {X_test_combined.shape}")
+    print(f"Length of selected_features_final: {len(selected_features_final)}")
 
-    # Filter features and their SHAP values
-    selected_features_filtered = [selected_features_final[i] for i in nonzero_indices]
-    shap_values_combined_filtered = shap_values_combined[:, nonzero_indices]
-
-    # Create the summary plot for the entire model
+    # Create the summary plot for all features
     plt.figure()
-    shap.summary_plot(shap_values_combined_filtered, X_test_combined[:, nonzero_indices],
-                      feature_names=selected_features_filtered, show=False)
+    shap.summary_plot(shap_values_combined, X_test_combined, feature_names=selected_features_final, show=False)
     plt.savefig(f'{output_dir}/shap_summary_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-    # Create the bar plot for the entire model
+    # Sorting features based on their importance for one sample (for illustration)
+    sample_index = 0
+    shap_values_for_sample = shap_values_combined[sample_index]
+    sorted_idx = np.argsort(np.abs(shap_values_for_sample))[::-1]
+
+    # Select top features for bar plot and dependence plots
+    top_n_features = min(20, len(sorted_idx))  # Limit to 200 features or fewer if less
+    top_features = sorted_idx[:top_n_features]
+    sorted_features = np.array(selected_features_final)[top_features]
+
+    # Use .iloc to correctly index by integer location
+    X_test_filtered = X_test_combined.iloc[:, top_features]
+
+    # Create the bar plot for the top features
     plt.figure()
-    shap.summary_plot(shap_values_combined_filtered, X_test_combined[:, nonzero_indices],
-                      feature_names=selected_features_filtered, plot_type="bar", show=False)
+    shap.summary_plot(shap_values_combined[:, top_features], X_test_filtered,
+                      feature_names=sorted_features, plot_type="bar", show=False)
     plt.savefig(f'{output_dir}/shap_bar_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-    top_n_features = 200
-    sorted_idx = np.argsort(np.abs(mean_shap_values[nonzero_indices]))[::-1][:top_n_features]
-    sorted_features = np.array(selected_features_filtered)[sorted_idx]
-    sorted_mean_shap_values = mean_shap_values[nonzero_indices][sorted_idx]
-
-    # Plot
+    # Custom bar plot for top features
     plt.figure(figsize=(10, 8))
-    colors = ['red' if val > 0 else 'blue' for val in sorted_mean_shap_values]
-    plt.barh(sorted_features, sorted_mean_shap_values, color=colors)
-    plt.xlabel('Mean SHAP value')
-    plt.title('SHAP Bar Plot')
+    colors = ['red' if shap_values_for_sample[idx] > 0 else 'blue' for idx in top_features]
+    plt.barh(sorted_features, np.abs(shap_values_for_sample[top_features]), color=colors)
+    plt.xlabel('SHAP value for Sample 0')
+    plt.title('Top SHAP Values for a Single Sample')
     plt.gca().invert_yaxis()
     plt.tight_layout()
-    plt.savefig(f'{output_dir}/shap_bar_plot_custom_all_folds.png', dpi=300, bbox_inches='tight')
+    plt.savefig(f'{output_dir}/shap_bar_plot_custom_sample_0.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-    # Create dependence plots for the top features
-    top_features = sorted_idx[:3]  # Get indices of top 3 features
-
-    for feature in top_features:
+    # Create dependence plots for the top 3 features
+    """for feature_idx in top_features[:3]:  # Get indices of top 3 features
         plt.figure()
-        shap.dependence_plot(feature, shap_values_combined_filtered, X_test_combined[:, nonzero_indices],
-                             feature_names=selected_features_filtered, show=False)
-        plt.savefig(f'{output_dir}/shap_dependence_plot_{selected_features_filtered[feature]}.png', dpi=300,
+        shap.dependence_plot(feature_idx, shap_values_combined, X_test_combined,
+                             feature_names=selected_features_final, show=False)
+        plt.savefig(f'{output_dir}/shap_dependence_plot_{sorted_features[feature_idx]}.png', dpi=300,
                     bbox_inches='tight')
-        plt.close()
+        plt.close()"""
 
-    bar_plot = Image.open(f'{output_dir}/shap_bar_plot_custom_all_folds.png')
+    # Combine the custom bar plot and summary plot into one image
+    bar_plot = Image.open(f'{output_dir}/shap_bar_plot_custom_sample_0.png')
     summary_plot = Image.open(f'{output_dir}/shap_summary_plot_all_folds.png')
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 8))
-
     axes[0].imshow(bar_plot)
     axes[0].axis('off')
-
     axes[1].imshow(summary_plot)
     axes[1].axis('off')
 
-    fig.suptitle('Shap Bar Plot and Summary Plot', fontsize=16)
-
+    fig.suptitle('SHAP Bar Plot and Summary Plot', fontsize=16)
     plt.tight_layout()
-
     plt.savefig(f'{output_dir}/shap_combined_plots.png', dpi=300)
     plt.show()
 
+
+
+
 def safe_log10(num):
     return np.log10(np.clip(num, a_min=1e-9, a_max=None))  # Clip values to avoid log10(0)
+
+
 def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
-    #X = pd.DataFrame(X, columns=features)
 
     print(f'X shape {X.shape}')
     current_working_dir = os.getcwd()
@@ -485,11 +486,10 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
     memory = Memory(location=cachedir, verbose=0)
 
     print(f'Starting {model_name}')
-    outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
-    # Save the outer fold indices
+    outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=42)
 
     if log10_select:
-        log10_pipe = FunctionTransformer(safe_log10)
+        log10_pipe = FunctionTransformer(np.log10)
     else:
         log10_pipe = None
 
@@ -500,7 +500,7 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
 
     pipeline = Pipeline([
         ('normalize', norm_pipe),
-        ('transform', log10_pipe),  # FunctionTransformer(np.log10)), # log10_select
+        ('transform', log10_pipe),
         ('scaler', StandardScaler()),
         ('Reduction', get_feature_reduction(feature_reduce_choice)),
         ('classifier', model_name)
@@ -513,9 +513,6 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
     all_f1_scores = []
     all_precisions = []
 
-    # Store SHAP values
-    shap_values_list = []
-    X_test_list = []
     fold_feature_sets = []
     selected_features_union = set()
 
@@ -544,46 +541,68 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
         fold_feature_sets.append(selected_features)
         selected_features_union.update(selected_features)
 
-        # Filter X_test to only include selected features
-        X_test_filtered = X_test[selected_features]
-        X_train_filtered = X_train[selected_features]
+    # Fit the model on the full dataset
+    pipeline.fit(X, y)
 
-        # Compute SHAP values
-        explainer = shap.Explainer(pipeline.named_steps['classifier'], X_train_filtered)
-        #explainer = shap.KernelExplainer(pipeline.named_steps['classifier'], X_train_filtered)
-        shap_values = explainer(X_test_filtered)
+    # Access the feature reduction step
+    reduction_step = pipeline.named_steps['Reduction']
+    selected_features_pipeline = []
+    # Check if the reduction step has a get_support method
+    if hasattr(reduction_step, 'get_support'):
+        # Get the boolean mask of selected features
+        selected_features_mask = reduction_step.get_support()
 
-        # Select SHAP values for the positive class (class 1)
-        if shap_values.values.ndim == 3:
-            shap_values_class_1 = shap_values.values[..., 1]
-        else:
-            shap_values_class_1 = shap_values.values
+        # Use the mask to get the actual feature names
+        selected_features_pipeline = [feature for feature, selected in zip(X.columns, selected_features_mask) if selected]
 
-        shap_values_list.append((shap_values_class_1, selected_features))
-        X_test_list.append(X_test_filtered)
+        print(f"Selected features: {selected_features_pipeline}")
+    else:
+        print("The reduction step does not support feature selection or has no get_support method.")
+        selected_features_pipeline = list(selected_features_union)
 
-    # Check consistency of features used across folds
-    first_fold_features = fold_feature_sets[0]
-    for fold_index, feature_set in enumerate(fold_feature_sets[1:], start=1):
-        if set(feature_set) != set(first_fold_features):
-            print(f"Warning: Feature set mismatch in fold {fold_index} compared to fold 0.")
-            print(f"Fold 0 features: {first_fold_features}")
-            print(f"Fold {fold_index} features: {feature_set}")
 
-    # Align SHAP values to the union of all selected features
-    aligned_shap_values_list = []
-    for shap_values, selected_features in shap_values_list:
-        aligned_shap_values = np.zeros((shap_values.shape[0], len(selected_features_union)))
-        feature_index_map = {feature: i for i, feature in enumerate(selected_features_union)}
-        for i, feature in enumerate(selected_features):
-            if feature in feature_index_map:
-                aligned_shap_values[:, feature_index_map[feature]] = shap_values[:, i]
-        aligned_shap_values_list.append(aligned_shap_values)
+    # Use the final model to calculate SHAP values on the entire dataset
+    selected_features_final = list(selected_features_pipeline)
+    X_filtered = X[selected_features_final]
 
-    shap_values_combined = np.concatenate(aligned_shap_values_list, axis=0)
-    X_test_combined = np.concatenate(X_test_list, axis=0)
+    # Use TreeExplainer for tree-based models like RandomForest
+    explainer = shap.TreeExplainer(pipeline.named_steps['classifier'])
+    shap_values_class_1 = explainer.shap_values(X_filtered)
 
-    selected_features_final = list(selected_features_union)
+    # Check if shap_values has multiple outputs for multi-class models
+    """if isinstance(shap_values, list) and len(shap_values) > 1:
+        shap_values_class_1 = shap_values[1]  # Select the SHAP values for class 1
+    else:
+        shap_values_class_1 = shap_values"""
+
+    # Check for all zero SHAP values
+    if np.all(shap_values_class_1 == 0):
+        print("Warning: All SHAP values are zero. This might indicate an issue with model training or SHAP calculation.")
+
+    # Generate the SHAP summary plot
+    try:
+        shap.summary_plot(shap_values_class_1, X_filtered, feature_names=selected_features_final)
+    except TypeError as e:
+        print(f"Encountered a TypeError: {e}")
+        print(f"Attempting to diagnose the issue... ${e}")
+
+        # Check shapes and types
+        print(f"Shape of shap_values_class_1: {shap_values_class_1.shape}")
+        print(f"Length of selected_features_final: {len(selected_features_final)}")
+
+        # Ensure that selected_features_final is correctly indexed
+        sort_inds = np.argsort(np.abs(shap_values_class_1).mean(0))
+        feature_names_sorted = np.array(selected_features_final)[sort_inds]
+
+        # Call summary plot again with the sorted feature names
+        shap.summary_plot(shap_values_class_1, X_filtered, feature_names=feature_names_sorted)
+
+    # Generate the SHAP summary plot
+    #shap.summary_plot(shap_values_class_1, X_filtered, feature_names=selected_features_final)
+
+    # Save the plot if needed
+    plt.savefig(os.path.join(output_dir, f"{ms_file_name}_shap_summary.png"))
+    plt.show()
 
     # Calculate mean and standard deviation for metrics
     mean_balanced_accuracy = np.mean(all_balanced_accuracies)
@@ -603,8 +622,7 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
     roc_auc = auc(fpr, tpr)
 
     return (mean_balanced_accuracy, std_balanced_accuracy, mean_recall, std_recall, mean_f1, std_f1, mean_precision,
-            std_precision), (roc_auc, fpr, tpr, thresholds), (
-    shap_values_combined, X_test_combined, selected_features_final)
+            std_precision), (roc_auc, fpr, tpr, thresholds), (shap_values_class_1, X_filtered, selected_features_final)
 
 
 def get_results(model_name, ms_input_file, feature_reduce_choice, transpose_select, norm, log10):
