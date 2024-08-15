@@ -405,6 +405,88 @@ def plot_shap_values(results, model_name, ms_file_name):
     print(f"Shape of X_test_combined: {X_test_combined.shape}")
     print(f"Length of selected_features_final: {len(selected_features_final)}")
 
+    ### 1. SHAP Summary Plot for All Features ###
+    plt.figure()
+    shap.summary_plot(shap_values_combined, X_test_combined, feature_names=selected_features_final, show=False)
+    plt.savefig(f'{output_dir}/shap_summary_plot_all_folds.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+    ### 2. Bar Plot for Top 20 Features ###
+    # Sorting features based on their importance for one sample (e.g., the first sample)
+    sample_index = 0
+    shap_values_for_sample = shap_values_combined[sample_index]
+    sorted_idx = np.argsort(np.abs(shap_values_for_sample))[::-1]
+
+    # Select top 20 features for bar plot and dependence plots
+    top_n_features = min(20, len(sorted_idx))  # Limit to 20 features
+    top_features = sorted_idx[:top_n_features]
+    sorted_features = np.array(selected_features_final)[top_features]
+
+    # Filter X_test_combined to include only the top features
+    X_test_filtered = X_test_combined.iloc[:, top_features]
+
+    plt.figure()
+    shap.summary_plot(shap_values_combined[:, top_features], X_test_filtered, feature_names=sorted_features, plot_type="bar", show=False)
+    plt.savefig(f'{output_dir}/shap_bar_plot_all_folds.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+    ### 3. Custom Bar Plot for Top 20 Features (Based on Sample 0) ###
+    plt.figure(figsize=(10, 8))
+
+    # Here we directly use the SHAP values (including both positive and negative values)
+    shap_values_to_plot = shap_values_for_sample[top_features]
+    colors = ['red' if val > 0 else 'blue' for val in shap_values_to_plot]
+
+    # Plot the bar plot with both positive and negative values
+    plt.barh(sorted_features, shap_values_to_plot, color=colors)
+    plt.xlabel('SHAP value')
+    plt.title('Top SHAP Values for a Single Sample')
+    plt.gca().invert_yaxis()
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/shap_bar_plot_custom_sample_0.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+    ### 4. Dependence Plots for Top 3 Features ###
+    for i in range(min(3, top_n_features)):  # Safely get the top 3 features, or fewer if less
+        feature_idx = top_features[i]  # This is the index within the original set
+        plt.figure()
+        shap.dependence_plot(feature_idx, shap_values_combined, X_test_combined, feature_names=selected_features_final, show=False)
+        plt.savefig(f'{output_dir}/shap_dependence_plot_{sorted_features[i]}.png', dpi=300, bbox_inches='tight')
+        plt.close()
+
+    ### 5. Combined Custom Bar Plot and Summary Plot ###
+    bar_plot = Image.open(f'{output_dir}/shap_bar_plot_custom_sample_0.png')
+    summary_plot = Image.open(f'{output_dir}/shap_summary_plot_all_folds.png')
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+    axes[0].imshow(bar_plot)
+    axes[0].axis('off')
+    axes[1].imshow(summary_plot)
+    axes[1].axis('off')
+
+    fig.suptitle('SHAP Bar Plot and Summary Plot', fontsize=16)
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/shap_combined_plots.png', dpi=300)
+    plt.show()
+
+# Example usage (assuming you have these variables defined)
+# plot_shap_values(results, model_name, ms_file_name)
+
+
+
+def plot_shap_values_old(results, model_name, ms_file_name):
+    output_dir = os.path.join(os.getcwd(), 'output')
+    result_metrics, result_roc, result_shap = results
+    shap_values_combined, X_test_combined, selected_features_final = result_shap
+
+    # Since you have binary classification, we'll use SHAP values for class 0 (or you could use class 1)
+    shap_values_combined = shap_values_combined[:, :, 0]
+
+    # Ensure consistency in the shapes before plotting
+    print(f"Shape of shap_values_combined: {shap_values_combined.shape}")
+    print(f"Shape of X_test_combined: {X_test_combined.shape}")
+    print(f"Length of selected_features_final: {len(selected_features_final)}")
+
     # Create the summary plot for all features
     plt.figure()
     shap.summary_plot(shap_values_combined, X_test_combined, feature_names=selected_features_final, show=False)
