@@ -411,7 +411,13 @@ def plot_shap_values(results, model_name, ms_file_name):
     plt.savefig(f'{output_dir}/shap_summary_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-    ### 2. Bar Plot for Top 20 Features ###
+    ### 2. SHAP Beeswarm Plot for All Features ###
+    plt.figure()
+    shap.summary_plot(shap_values_combined, X_test_combined, feature_names=selected_features_final, plot_type="dot", show=False)
+    plt.savefig(f'{output_dir}/shap_beeswarm_plot_all_folds.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+    ### 3. Bar Plot for Top 20 Features ###
     # Sorting features based on their importance for one sample (e.g., the first sample)
     sample_index = 0
     shap_values_for_sample = shap_values_combined[sample_index]
@@ -430,7 +436,7 @@ def plot_shap_values(results, model_name, ms_file_name):
     plt.savefig(f'{output_dir}/shap_bar_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-    ### 3. Custom Bar Plot for Top 20 Features (Based on Sample 0) ###
+    ### 4. Custom Bar Plot for Top 20 Features (Based on Sample 0) ###
     plt.figure(figsize=(10, 8))
 
     # Here we directly use the SHAP values (including both positive and negative values)
@@ -446,7 +452,7 @@ def plot_shap_values(results, model_name, ms_file_name):
     plt.savefig(f'{output_dir}/shap_bar_plot_custom_sample_0.png', dpi=300, bbox_inches='tight')
     plt.close()
 
-    ### 4. Dependence Plots for Top 3 Features ###
+    ### 5. Dependence Plots for Top 3 Features ###
     for i in range(min(3, top_n_features)):  # Safely get the top 3 features, or fewer if less
         feature_idx = top_features[i]  # This is the index within the original set
         plt.figure()
@@ -454,7 +460,7 @@ def plot_shap_values(results, model_name, ms_file_name):
         plt.savefig(f'{output_dir}/shap_dependence_plot_{sorted_features[i]}.png', dpi=300, bbox_inches='tight')
         plt.close()
 
-    ### 5. Combined Custom Bar Plot and Summary Plot ###
+    ### 6. Combined Custom Bar Plot and Summary Plot ###
     bar_plot = Image.open(f'{output_dir}/shap_bar_plot_custom_sample_0.png')
     summary_plot = Image.open(f'{output_dir}/shap_summary_plot_all_folds.png')
 
@@ -467,7 +473,30 @@ def plot_shap_values(results, model_name, ms_file_name):
     fig.suptitle('SHAP Bar Plot and Summary Plot', fontsize=16)
     plt.tight_layout()
     plt.savefig(f'{output_dir}/shap_combined_plots.png', dpi=300)
-    plt.show()
+    plt.close()
+
+    ### 7. SHAP Waterfall Plot for a Single Sample ###
+    base_value = shap_values_combined.mean(axis=0).mean()  # Approximate base value
+    shap_explanation = shap.Explanation(values=shap_values_to_plot, base_values=base_value, feature_names=sorted_features)
+
+    plt.figure()
+    shap.waterfall_plot(shap_explanation)
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/shap_waterfall_plot_sample_{sample_index}.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+    ### 8. SHAP Force Plot for a Single Sample ###
+    plt.figure()
+    shap.force_plot(base_value, shap_values_to_plot, sorted_features, matplotlib=True)
+    plt.savefig(f'{output_dir}/shap_force_plot_sample_{sample_index}.png', dpi=300, bbox_inches='tight')
+    plt.close()
+
+    ### 9. SHAP Decision Plot for Multiple Samples ###
+    plt.figure()
+    shap.decision_plot(base_value, shap_values_combined[:, top_features], sorted_features)
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/shap_decision_plot.png', dpi=300, bbox_inches='tight')
+    plt.close()
 
 # Example usage (assuming you have these variables defined)
 # plot_shap_values(results, model_name, ms_file_name)
