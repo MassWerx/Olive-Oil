@@ -1,4 +1,5 @@
 # https://github.com/scikit-learn-contrib/boruta_py
+import json
 
 import pandas as pd
 import numpy as np
@@ -106,7 +107,6 @@ def load_data_frame(input_dataframe):
     # Ensure all numeric columns are properly typed as float64
     data_table = train_oil_file.iloc[:, 2:]
     data_table = data_table.apply(pd.to_numeric, errors='coerce')
-
 
     samples = train_oil_file.iloc[:, 0]
     labels = train_oil_file.iloc[:, 1]
@@ -392,6 +392,7 @@ def plot_roc(results, model_name):
 
     fig.write_image(f'{output_dir}/{model_name}_ROC.png')
 
+
 def plot_shap_values(results, model_name, ms_file_name):
     output_dir = os.path.join(os.getcwd(), 'output')
     result_metrics, result_roc, result_shap = results
@@ -410,12 +411,15 @@ def plot_shap_values(results, model_name, ms_file_name):
     shap.summary_plot(shap_values_combined, X_test_combined, feature_names=selected_features_final, show=False)
     plt.savefig(f'{output_dir}/shap_summary_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
+    print("Summary plot for all features saved as 'shap_summary_plot_all_folds.png'")
 
     ### 2. SHAP Beeswarm Plot for All Features ###
     plt.figure()
-    shap.summary_plot(shap_values_combined, X_test_combined, feature_names=selected_features_final, plot_type="dot", show=False)
+    shap.summary_plot(shap_values_combined, X_test_combined, feature_names=selected_features_final, plot_type="dot",
+                      show=False)
     plt.savefig(f'{output_dir}/shap_beeswarm_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
+    print("Summary plot for all features saved as 'shap_beeswarm_plot_all_folds.png'")
 
     ### 3. Bar Plot for Top 20 Features ###
     # Sorting features based on their importance for one sample (e.g., the first sample)
@@ -432,9 +436,11 @@ def plot_shap_values(results, model_name, ms_file_name):
     X_test_filtered = X_test_combined.iloc[:, top_features]
 
     plt.figure()
-    shap.summary_plot(shap_values_combined[:, top_features], X_test_filtered, feature_names=sorted_features, plot_type="bar", show=False)
+    shap.summary_plot(shap_values_combined[:, top_features], X_test_filtered, feature_names=sorted_features,
+                      plot_type="bar", show=False)
     plt.savefig(f'{output_dir}/shap_bar_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
+    print("Summary plot for all features saved as 'shap_bar_plot_all_folds.png'")
 
     ### 4. Custom Bar Plot for Top 20 Features (Based on Sample 0) ###
     plt.figure(figsize=(10, 8))
@@ -451,14 +457,17 @@ def plot_shap_values(results, model_name, ms_file_name):
     plt.tight_layout()
     plt.savefig(f'{output_dir}/shap_bar_plot_custom_sample_0.png', dpi=300, bbox_inches='tight')
     plt.close()
+    print("Summary plot for all features saved as 'shap_bar_plot_custom_sample_0.png'")
 
     ### 5. Dependence Plots for Top 3 Features ###
     for i in range(min(3, top_n_features)):  # Safely get the top 3 features, or fewer if less
         feature_idx = top_features[i]  # This is the index within the original set
         plt.figure()
-        shap.dependence_plot(feature_idx, shap_values_combined, X_test_combined, feature_names=selected_features_final, show=False)
+        shap.dependence_plot(feature_idx, shap_values_combined, X_test_combined, feature_names=selected_features_final,
+                             show=False)
         plt.savefig(f'{output_dir}/shap_dependence_plot_{sorted_features[i]}.png', dpi=300, bbox_inches='tight')
         plt.close()
+    print("Summary plot for all features saved as 'shap_dependence_plots'")
 
     ### 6. Combined Custom Bar Plot and Summary Plot ###
     bar_plot = Image.open(f'{output_dir}/shap_bar_plot_custom_sample_0.png')
@@ -474,33 +483,38 @@ def plot_shap_values(results, model_name, ms_file_name):
     plt.tight_layout()
     plt.savefig(f'{output_dir}/shap_combined_plots.png', dpi=300)
     plt.close()
+    print("Summary plot for all features saved as 'shap_combined_plots.png'")
 
     ### 7. SHAP Waterfall Plot for a Single Sample ###
     base_value = shap_values_combined.mean(axis=0).mean()  # Approximate base value
-    shap_explanation = shap.Explanation(values=shap_values_to_plot, base_values=base_value, feature_names=sorted_features)
+    shap_explanation = shap.Explanation(values=shap_values_to_plot, base_values=base_value,
+                                        feature_names=sorted_features)
 
     plt.figure()
-    shap.waterfall_plot(shap_explanation)
+    shap.waterfall_plot(shap_explanation, show=False)
     plt.tight_layout()
     plt.savefig(f'{output_dir}/shap_waterfall_plot_sample_{sample_index}.png', dpi=300, bbox_inches='tight')
     plt.close()
+    print("Summary plot for all features saved as 'shap_waterfall_plot_sample.png'")
 
     ### 8. SHAP Force Plot for a Single Sample ###
     plt.figure()
-    shap.force_plot(base_value, shap_values_to_plot, sorted_features, matplotlib=True)
+    shap.force_plot(base_value, shap_values_to_plot, sorted_features, matplotlib=True, show=False)
     plt.savefig(f'{output_dir}/shap_force_plot_sample_{sample_index}.png', dpi=300, bbox_inches='tight')
     plt.close()
+    print("Summary plot for all features saved as 'shap_force_plot_sample.png'")
 
     ### 9. SHAP Decision Plot for Multiple Samples ###
     plt.figure()
-    shap.decision_plot(base_value, shap_values_combined[:, top_features], sorted_features)
+    shap.decision_plot(base_value, shap_values_combined[:, top_features], sorted_features, show=False)
     plt.tight_layout()
     plt.savefig(f'{output_dir}/shap_decision_plot.png', dpi=300, bbox_inches='tight')
     plt.close()
+    print("Summary plot for all features saved as 'shap_decision_plot.png'")
+
 
 # Example usage (assuming you have these variables defined)
 # plot_shap_values(results, model_name, ms_file_name)
-
 
 
 def plot_shap_values_old(results, model_name, ms_file_name):
@@ -521,6 +535,7 @@ def plot_shap_values_old(results, model_name, ms_file_name):
     shap.summary_plot(shap_values_combined, X_test_combined, feature_names=selected_features_final, show=False)
     plt.savefig(f'{output_dir}/shap_summary_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
+    print("Summary plot for all features saved as 'shap_summary_plot_all_folds.png'")
 
     # Sorting features based on their importance for one sample (for illustration)
     sample_index = 0
@@ -528,7 +543,7 @@ def plot_shap_values_old(results, model_name, ms_file_name):
     sorted_idx = np.argsort(np.abs(shap_values_for_sample))[::-1]
 
     # Select top features for bar plot and dependence plots
-    top_n_features = min(20, len(sorted_idx))  # Limit to 200 features or fewer if less
+    top_n_features = min(20, len(sorted_idx))  # Limit to 20 features or fewer if less
     top_features = sorted_idx[:top_n_features]
     sorted_features = np.array(selected_features_final)[top_features]
 
@@ -541,6 +556,7 @@ def plot_shap_values_old(results, model_name, ms_file_name):
                       feature_names=sorted_features, plot_type="bar", show=False)
     plt.savefig(f'{output_dir}/shap_bar_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
+    print("Bar plot for top features saved as 'shap_bar_plot_all_folds.png'")
 
     # Custom bar plot for top features
     plt.figure(figsize=(10, 8))
@@ -552,6 +568,7 @@ def plot_shap_values_old(results, model_name, ms_file_name):
     plt.tight_layout()
     plt.savefig(f'{output_dir}/shap_bar_plot_custom_sample_0.png', dpi=300, bbox_inches='tight')
     plt.close()
+    print("Custom bar plot for sample 0 saved as 'shap_bar_plot_custom_sample_0.png'")
 
     # Create dependence plots for the top 3 features
     """for feature_idx in top_features[:3]:  # Get indices of top 3 features
@@ -560,7 +577,8 @@ def plot_shap_values_old(results, model_name, ms_file_name):
                              feature_names=selected_features_final, show=False)
         plt.savefig(f'{output_dir}/shap_dependence_plot_{sorted_features[feature_idx]}.png', dpi=300,
                     bbox_inches='tight')
-        plt.close()"""
+        plt.close()
+        print(f"Dependence plot for {sorted_features[feature_idx]} saved")"""
 
     # Combine the custom bar plot and summary plot into one image
     bar_plot = Image.open(f'{output_dir}/shap_bar_plot_custom_sample_0.png')
@@ -576,8 +594,7 @@ def plot_shap_values_old(results, model_name, ms_file_name):
     plt.tight_layout()
     plt.savefig(f'{output_dir}/shap_combined_plots.png', dpi=300)
     plt.show()
-
-
+    print("Combined SHAP bar plot and summary plot saved as 'shap_combined_plots.png'")
 
 
 def safe_log10(num):
@@ -592,29 +609,23 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
     print(f'X shape {X.shape}')
     current_working_dir = os.getcwd()
     output_dir = os.path.join(current_working_dir, 'output')
+    os.makedirs(output_dir, exist_ok=True)
 
     cachedir = mkdtemp()
     memory = Memory(location=cachedir, verbose=0)
 
     print(f'Starting {model_name}')
-    outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=42)
+    outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
 
-    if log10_select:
-        log10_pipe = FunctionTransformer(np.log10)
-    else:
-        log10_pipe = None
-
-    if normalize_select:
-        norm_pipe = Normalizer(norm='l1')
-    else:
-        norm_pipe = None
+    log10_pipe = FunctionTransformer(np.log10) if log10_select else 'passthrough'
+    norm_pipe = Normalizer(norm='l1') if normalize_select else 'passthrough'
 
     pipeline = Pipeline([
         ('normalize', norm_pipe),
         ('transform', log10_pipe),
         ('scaler', StandardScaler()),
         ('Reduction', get_feature_reduction(feature_reduce_choice)),
-        ('classifier', model_name)
+        ('classifier', RandomForestClassifier())
     ], memory=memory)
 
     all_y_true = []
@@ -624,10 +635,14 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
     all_f1_scores = []
     all_precisions = []
 
-    fold_feature_sets = []
     selected_features_union = set()
 
-    for train_idx, test_idx in outer_cv.split(X, y):
+    # List to store rows of features
+    feature_selection_rows = []
+
+    selected_features_intersection = None  # Will hold the features selected in all folds
+
+    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
 
@@ -643,34 +658,83 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
         all_precisions.append(precision_score(y_test, y_pred))
 
         # Get the features used after reduction
-        if 'Reduction' in pipeline.named_steps and hasattr(pipeline.named_steps['Reduction'], 'get_support'):
-            support_mask = pipeline.named_steps['Reduction'].get_support()
+        reduction_step = pipeline.named_steps['Reduction']
+        if hasattr(reduction_step, 'support_'):
+            support_mask = reduction_step.support_
             selected_features = [features[i] for i, flag in enumerate(support_mask) if flag]
         else:
             selected_features = features  # No reduction step, use all features
 
-        fold_feature_sets.append(selected_features)
-        selected_features_union.update(selected_features)
+        selected_features_union.update(selected_features)  # Track union of all selected features
 
-    # Fit the model on the full dataset
-    pipeline.fit(X, y)
+        # Initialize the intersection set on the first fold
+        if selected_features_intersection is None:
+            selected_features_intersection = set(selected_features)
+        else:
+            # Intersect with the selected features from this fold
+            selected_features_intersection.intersection_update(selected_features)
+
+        # Add the selected features as a new row
+        feature_selection_rows.append([str(fold_idx)] + selected_features)
+
+    # Convert the sets to sorted lists before saving
+    selected_features_union_list = sorted(list(selected_features_union))
+    selected_features_intersection_list = sorted(list(selected_features_intersection))
+
+    # Save the union of selected features
+    selected_union_features_file = os.path.join(output_dir, 'selected_features_union.csv')
+    pd.Series(selected_features_union_list).to_csv(selected_union_features_file, index=False)
+    print(f"Union of selected features saved to '{selected_union_features_file}'.")
+
+    # Save the intersection of selected features
+    selected_intersection_features_file = os.path.join(output_dir, 'selected_features_intersection.csv')
+    pd.Series(selected_features_intersection_list).to_csv(selected_intersection_features_file, index=False)
+    print(f"Intersection of selected features saved to '{selected_intersection_features_file}'.")
+
+    # Determine the maximum number of columns needed
+    max_features = max(len(row) for row in feature_selection_rows)
+
+    # Create a DataFrame with dynamic columns
+    column_names = ['Fold'] + [f'Feature_{i + 1}' for i in range(max_features - 1)]
+    feature_selection_df = pd.DataFrame(feature_selection_rows, columns=column_names)
+
+    # Save the feature selection DataFrame to a CSV file
+    feature_selection_file = os.path.join(output_dir, 'feature_selection_per_fold.csv')
+    feature_selection_df.to_csv(feature_selection_file, index=False)
+    print(f"Feature selection per fold saved to '{feature_selection_file}'.")
+
+    # Continue with the rest of your code...
+    # JUST A TEST
+    X_filtered = X[selected_features_intersection_list]
+    pipeline.fit(X_filtered, y, cv=outer_cv)
 
     # Access the feature reduction step
     reduction_step = pipeline.named_steps['Reduction']
     selected_features_pipeline = []
-    # Check if the reduction step has a get_support method
-    if hasattr(reduction_step, 'get_support'):
+
+    # Use the support_ attribute instead of get_support()
+    if hasattr(reduction_step, 'support_'):
         # Get the boolean mask of selected features
-        selected_features_mask = reduction_step.get_support()
+        selected_features_mask = reduction_step.support_
 
         # Use the mask to get the actual feature names
-        selected_features_pipeline = [feature for feature, selected in zip(X.columns, selected_features_mask) if selected]
+        selected_features_pipeline = [feature for feature, selected in zip(X.columns, selected_features_mask) if
+                                      selected]
 
-        print(f"Selected features: {selected_features_pipeline}")
+        selected_features_file = os.path.join(output_dir, 'selected_features_SHAP.csv')
+        pd.Series(selected_features_pipeline).to_csv(selected_features_file, index=False)
+        print(f"Selected features saved to '{selected_features_file}'.")
     else:
-        print("The reduction step does not support feature selection or has no get_support method.")
+        print("The reduction step does not support feature selection or has no support_ attribute.")
         selected_features_pipeline = list(selected_features_union)
 
+    # Convert the set to a sorted list before creating the Series
+    selected_features_union_list = sorted(list(selected_features_union))
+
+    # Save the ordered list of features to a CSV file
+    selected_union_features_file = os.path.join(output_dir, 'selected_features_union.csv')
+    pd.Series(selected_features_union_list).to_csv(selected_union_features_file, index=False)
+    print(f"Selected features saved to '{selected_union_features_file}'.")
 
     # Use the final model to calculate SHAP values on the entire dataset
     selected_features_final = list(selected_features_pipeline)
@@ -680,22 +744,17 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
     explainer = shap.TreeExplainer(pipeline.named_steps['classifier'])
     shap_values_class_1 = explainer.shap_values(X_filtered)
 
-    # Check if shap_values has multiple outputs for multi-class models
-    """if isinstance(shap_values, list) and len(shap_values) > 1:
-        shap_values_class_1 = shap_values[1]  # Select the SHAP values for class 1
-    else:
-        shap_values_class_1 = shap_values"""
-
     # Check for all zero SHAP values
     if np.all(shap_values_class_1 == 0):
-        print("Warning: All SHAP values are zero. This might indicate an issue with model training or SHAP calculation.")
+        print(
+            "Warning: All SHAP values are zero. This might indicate an issue with model training or SHAP calculation.")
 
     # Generate the SHAP summary plot
     try:
-        shap.summary_plot(shap_values_class_1, X_filtered, feature_names=selected_features_final)
+        shap.summary_plot(shap_values_class_1, X_filtered, feature_names=selected_features_final, show=False)
     except TypeError as e:
         print(f"Encountered a TypeError: {e}")
-        print(f"Attempting to diagnose the issue... ${e}")
+        print(f"Attempting to diagnose the issue... {e}")
 
         # Check shapes and types
         print(f"Shape of shap_values_class_1: {shap_values_class_1.shape}")
@@ -706,10 +765,7 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
         feature_names_sorted = np.array(selected_features_final)[sort_inds]
 
         # Call summary plot again with the sorted feature names
-        shap.summary_plot(shap_values_class_1, X_filtered, feature_names=feature_names_sorted)
-
-    # Generate the SHAP summary plot
-    #shap.summary_plot(shap_values_class_1, X_filtered, feature_names=selected_features_final)
+        shap.summary_plot(shap_values_class_1, X_filtered, feature_names=feature_names_sorted, show=False)
 
     # Save the plot if needed
     plt.savefig(os.path.join(output_dir, f"{ms_file_name}_shap_summary.png"))
@@ -732,16 +788,13 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
     fpr, tpr, thresholds = roc_curve(all_y_true, all_y_scores)
     roc_auc = auc(fpr, tpr)
 
+    memory.clear(warn=False)
+
     return (mean_balanced_accuracy, std_balanced_accuracy, mean_recall, std_recall, mean_f1, std_f1, mean_precision,
             std_precision), (roc_auc, fpr, tpr, thresholds), (shap_values_class_1, X_filtered, selected_features_final)
 
 
 def get_results(model_name, ms_input_file, feature_reduce_choice, transpose_select, norm, log10):
-    output_dir = os.path.join(current_working_dir, 'output')
-    if os.path.exists(output_dir):
-        shutil.rmtree(output_dir)
-    os.makedirs(output_dir)
-
     print(f"Starting ... {model_name} / {ms_input_file}")
     ms_file_name = Path(ms_input_file).stem
     df_file = load_data_from_file(ms_input_file, transpose_select)
@@ -753,22 +806,62 @@ def get_results(model_name, ms_input_file, feature_reduce_choice, transpose_sele
 
 seed = 1234546
 
+
 def str2bool(v):
     if v is None:
         return None
     if isinstance(v, bool):
         return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    elif v.lower() == 'none':  # Handle 'none' explicitly
+    if isinstance(v, str):
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        elif v.lower() == 'none':  # Handle 'none' explicitly
+            return None
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected or None.')
+    raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+def str_or_none(v):
+    if v.lower() == 'none':
         return None
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
+    return v
+
+
+def save_input_params(params, output_dir):
+    """Save input parameters to a JSON file."""
+    params_file = os.path.join(output_dir, 'input_parameters.json')
+    with open(params_file, 'w') as f:
+        json.dump(params, f, indent=4)
+    print(f"Input parameters saved to '{params_file}'.")
+
 
 def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
+    #try:
     print("Starting ... ")
+    if feature_reduce_choice is None:
+        print("No feature reduction method selected. Proceeding without feature reduction.")
+    else:
+        print(f"Feature reduction method selected: {feature_reduce_choice}")
+
+    # Prepare the output directory
+    output_dir = os.path.join(current_working_dir, 'output')
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save input parameters to a file
+    input_params = {
+        "ms_input_file": ms_input_file,
+        "feature_reduce_choice": feature_reduce_choice,
+        "transpose": transpose,
+        "norm": norm,
+        "log10": log10,
+    }
+    save_input_params(input_params, output_dir)
+
     transpose_select = transpose
     feature_reduce_choice = feature_reduce_choice  # None #'Boruta' #'Boruta' #'Boruta'
     model_name = 'RandomForest'  # 'TensorFlow' #'RandomForest'#'RandomForest' #'GradientBoosting' #'SVM' #'ElasticNet'
@@ -778,29 +871,26 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
     plot_roc(results, model_name)
     features = ms_info['feature_names']
     plot_shap_values(results, model_name, ms_file_name)
-    # with open(os.path.join(current_working_dir, f'output_{name}/overall_{name}.txt'), 'w') as f:
-    #   f.write(f'Overall So Far: {overall_results}\n')
-    output_dir = os.path.join(current_working_dir, 'output')
+
     if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
         os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
 
     create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{model_name}_{ms_file_name}'), output_dir)
 
 
-"""
-python ../../OneShotClassOld.py Adult_MALDI-TAG_EVOO_EVO-CAN_no-outliers_unnorm_31Oct23.csv Boruta false true true
-python ../../OneShotClassOld.py DART-PP-unnorm-filter_1Mar23.csv Boruta true true false
-python ../../OneShotClassOld.py Grade_DART-PP_filter_unnorm_7Mar23.csv Boruta true true false
-"""
+#except Exception as e:
+#    print(f"An error occurred: {e}")
+# Optionally log the error to a file or take other actions as needed
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run regression models with feature reduction.')
     parser.add_argument('ms_input_file', type=str, help='Path to the input CSV file.')
-    parser.add_argument('feature_reduce_choice', type=str2bool, help='Choice of feature reduction method.')
+    parser.add_argument('feature_reduce_choice', type=str_or_none, nargs='?', default=None,
+                        help='Choice of feature reduction method. Defaults to None.')
     parser.add_argument('transpose', type=str2bool, help='Transpose file (true/false)')
     parser.add_argument('norm', type=str2bool, help='Normalize (true/false)')
     parser.add_argument('log10', type=str2bool, help='Take the log 10 of input in the pipeline (true/false)')
     args = parser.parse_args()
 
-    main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  #, args.set_seed)
-
+    main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  # , args.set_seed)
