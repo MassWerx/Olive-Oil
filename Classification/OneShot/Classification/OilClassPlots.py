@@ -20,7 +20,7 @@ from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer, Normalizer
 from boruta import BorutaPy
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
-from sklearn.model_selection import RepeatedStratifiedKFold, GridSearchCV
+from sklearn.model_selection import RepeatedStratifiedKFold, GridSearchCV, cross_validate
 from sklearn.pipeline import Pipeline
 from pathlib import Path
 from tempfile import mkdtemp
@@ -601,7 +601,118 @@ def safe_log10(num):
     return np.log10(np.clip(num, a_min=1e-9, a_max=None))  # Clip values to avoid log10(0)
 
 
-def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
+def run_model_intersection(ms_info, model_name, ms_file_name, feature_reduce_choice, normalize_select, log10_select, seed=42):
+    X = ms_info['X']
+    y = ms_info['y']
+    features = ms_info['feature_names']
+
+    print(f'X shape {X.shape}')
+    current_working_dir = os.getcwd()
+    output_dir = os.path.join(current_working_dir, 'output')
+    os.makedirs(output_dir, exist_ok=True)
+
+    cachedir = mkdtemp()
+    memory = Memory(location=cachedir, verbose=0)
+
+    print(f'Starting {model_name}')
+    outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
+
+    log10_pipe = FunctionTransformer(np.log10) if log10_select else 'passthrough'
+    norm_pipe = Normalizer(norm='l1') if normalize_select else 'passthrough'
+
+    pipeline = Pipeline([
+        ('normalize', norm_pipe),
+        ('transform', log10_pipe),
+        ('scaler', StandardScaler()),
+        ('Reduction', get_feature_reduction(feature_reduce_choice)),
+        ('classifier', RandomForestClassifier())
+    ], memory=memory)
+
+    selected_features_union = set()
+    selected_features_intersection = None
+
+    # Perform cross-validation and feature selection
+    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+
+        pipeline.fit(X_train, y_train)
+
+        # Get the features used after reduction
+        reduction_step = pipeline.named_steps['Reduction']
+        if hasattr(reduction_step, 'support_'):
+            support_mask = reduction_step.support_
+            selected_features = [features[i] for i, flag in enumerate(support_mask) if flag]
+        else:
+            selected_features = features  # No reduction step, use all features
+
+        selected_features_union.update(selected_features)
+
+        if selected_features_intersection is None:
+            selected_features_intersection = set(selected_features)
+        else:
+            selected_features_intersection.intersection_update(selected_features)
+
+    # Convert the sets to sorted lists before saving
+    selected_features_union_list = sorted(list(selected_features_union))
+    selected_features_intersection_list = sorted(list(selected_features_intersection))
+
+    # Save the union of selected features
+    selected_union_features_file = os.path.join(output_dir, 'selected_features_union.csv')
+    pd.Series(selected_features_union_list).to_csv(selected_union_features_file, index=False)
+    print(f"Union of selected features saved to '{selected_union_features_file}'.")
+
+    # Save the intersection of selected features
+    selected_intersection_features_file = os.path.join(output_dir, 'selected_features_intersection.csv')
+    pd.Series(selected_features_intersection_list).to_csv(selected_intersection_features_file, index=False)
+    print(f"Intersection of selected features saved to '{selected_intersection_features_file}'.")
+
+    # Retrain the model on the entire dataset using the intersection of features
+    selected_features_final = selected_features_intersection_list
+    X_filtered = X[selected_features_final]
+    pipeline.fit(X_filtered, y)
+
+    # Use TreeExplainer for tree-based models like RandomForest
+    explainer = shap.TreeExplainer(pipeline.named_steps['classifier'])
+    shap_values = explainer.shap_values(X_filtered)
+
+    # Handle multiclass SHAP values if necessary
+    shap_values_to_plot = shap_values if isinstance(shap_values, np.ndarray) else shap_values[1]
+
+    # Save SHAP summary plot
+    shap.summary_plot(shap_values_to_plot, X_filtered, feature_names=selected_features_final, show=False)
+    plt.savefig(os.path.join(output_dir, f"{ms_file_name}_shap_summary.png"))
+    plt.close()  # Close the plot to free memory
+
+    # Evaluate model using cross-validation on final feature set
+    scoring = ['balanced_accuracy', 'recall', 'f1', 'precision', 'roc_auc']
+    cv_results = cross_validate(pipeline, X_filtered, y, cv=outer_cv, scoring=scoring, return_train_score=False,
+                                n_jobs=-1)
+
+    # Compute mean and standard deviation for each metric
+    mean_balanced_accuracy = np.mean(cv_results['test_balanced_accuracy'])
+    std_balanced_accuracy = np.std(cv_results['test_balanced_accuracy'])
+
+    mean_recall = np.mean(cv_results['test_recall'])
+    std_recall = np.std(cv_results['test_recall'])
+
+    mean_f1 = np.mean(cv_results['test_f1'])
+    std_f1 = np.std(cv_results['test_f1'])
+
+    mean_precision = np.mean(cv_results['test_precision'])
+    std_precision = np.std(cv_results['test_precision'])
+
+    mean_roc_auc = np.mean(cv_results['test_roc_auc'])
+
+    memory.clear(warn=False)
+
+    return (mean_balanced_accuracy, std_balanced_accuracy, mean_recall, std_recall, mean_f1, std_f1, mean_precision,
+            std_precision), (mean_roc_auc, None, None, None), (shap_values_to_plot, X_filtered, selected_features_final)
+
+
+
+
+def run_model_union(ms_info, model_name, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
@@ -636,11 +747,10 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
     all_precisions = []
 
     selected_features_union = set()
+    selected_features_intersection = None
 
     # List to store rows of features
     feature_selection_rows = []
-
-    selected_features_intersection = None  # Will hold the features selected in all folds
 
     for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
@@ -667,11 +777,9 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
 
         selected_features_union.update(selected_features)  # Track union of all selected features
 
-        # Initialize the intersection set on the first fold
         if selected_features_intersection is None:
             selected_features_intersection = set(selected_features)
         else:
-            # Intersect with the selected features from this fold
             selected_features_intersection.intersection_update(selected_features)
 
         # Add the selected features as a new row
@@ -703,73 +811,13 @@ def run_model(ms_info, model_name, ms_file_name, feature_reduce_choice, normaliz
     feature_selection_df.to_csv(feature_selection_file, index=False)
     print(f"Feature selection per fold saved to '{feature_selection_file}'.")
 
-    # Continue with the rest of your code...
-    # JUST A TEST
-    X_filtered = X[selected_features_intersection_list]
-    pipeline.fit(X_filtered, y, cv=outer_cv)
-
-    # Access the feature reduction step
-    reduction_step = pipeline.named_steps['Reduction']
-    selected_features_pipeline = []
-
-    # Use the support_ attribute instead of get_support()
-    if hasattr(reduction_step, 'support_'):
-        # Get the boolean mask of selected features
-        selected_features_mask = reduction_step.support_
-
-        # Use the mask to get the actual feature names
-        selected_features_pipeline = [feature for feature, selected in zip(X.columns, selected_features_mask) if
-                                      selected]
-
-        selected_features_file = os.path.join(output_dir, 'selected_features_SHAP.csv')
-        pd.Series(selected_features_pipeline).to_csv(selected_features_file, index=False)
-        print(f"Selected features saved to '{selected_features_file}'.")
-    else:
-        print("The reduction step does not support feature selection or has no support_ attribute.")
-        selected_features_pipeline = list(selected_features_union)
-
-    # Convert the set to a sorted list before creating the Series
-    selected_features_union_list = sorted(list(selected_features_union))
-
-    # Save the ordered list of features to a CSV file
-    selected_union_features_file = os.path.join(output_dir, 'selected_features_union.csv')
-    pd.Series(selected_features_union_list).to_csv(selected_union_features_file, index=False)
-    print(f"Selected features saved to '{selected_union_features_file}'.")
-
-    # Use the final model to calculate SHAP values on the entire dataset
-    selected_features_final = list(selected_features_pipeline)
+    # Use the intersection of selected features for SHAP
+    selected_features_final = selected_features_union_list
     X_filtered = X[selected_features_final]
 
     # Use TreeExplainer for tree-based models like RandomForest
     explainer = shap.TreeExplainer(pipeline.named_steps['classifier'])
     shap_values_class_1 = explainer.shap_values(X_filtered)
-
-    # Check for all zero SHAP values
-    if np.all(shap_values_class_1 == 0):
-        print(
-            "Warning: All SHAP values are zero. This might indicate an issue with model training or SHAP calculation.")
-
-    # Generate the SHAP summary plot
-    try:
-        shap.summary_plot(shap_values_class_1, X_filtered, feature_names=selected_features_final, show=False)
-    except TypeError as e:
-        print(f"Encountered a TypeError: {e}")
-        print(f"Attempting to diagnose the issue... {e}")
-
-        # Check shapes and types
-        print(f"Shape of shap_values_class_1: {shap_values_class_1.shape}")
-        print(f"Length of selected_features_final: {len(selected_features_final)}")
-
-        # Ensure that selected_features_final is correctly indexed
-        sort_inds = np.argsort(np.abs(shap_values_class_1).mean(0))
-        feature_names_sorted = np.array(selected_features_final)[sort_inds]
-
-        # Call summary plot again with the sorted feature names
-        shap.summary_plot(shap_values_class_1, X_filtered, feature_names=feature_names_sorted, show=False)
-
-    # Save the plot if needed
-    plt.savefig(os.path.join(output_dir, f"{ms_file_name}_shap_summary.png"))
-    plt.show()
 
     # Calculate mean and standard deviation for metrics
     mean_balanced_accuracy = np.mean(all_balanced_accuracies)
@@ -800,7 +848,10 @@ def get_results(model_name, ms_input_file, feature_reduce_choice, transpose_sele
     df_file = load_data_from_file(ms_input_file, transpose_select)
     ms_info = load_data_frame(df_file)
     the_model = get_model(model_name, ms_info['y'])
-    results = run_model(ms_info, the_model, ms_file_name, feature_reduce_choice, norm, log10)
+    # <------------------------------------------
+    results = run_model_intersection(ms_info, the_model, ms_file_name, feature_reduce_choice, norm, log10)
+    # results = run_model_union(ms_info, the_model, ms_file_name, feature_reduce_choice, norm, log10)
+    # <------------------------------------------
     return results, ms_info
 
 
