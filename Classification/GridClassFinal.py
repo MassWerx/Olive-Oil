@@ -1,5 +1,19 @@
+import json
+
 import pandas as pd
 import numpy as np
+
+import argparse
+import joblib
+import matplotlib.pyplot as plt
+
+import pickle
+import sklearn
+import sys
+import os
+import tensorflow as tf
+import shap
+
 from scikeras.wrappers import KerasClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
@@ -22,13 +36,23 @@ import plotly.express as px
 from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_score, f1_score, precision_score, \
     accuracy_score
 from sklearn.svm import SVC
-import tensorflow as tf
+
 from joblib import Memory
 from xgboost import XGBRegressor
 
 import warnings
 
 warnings.simplefilter(action='ignore')  #, category=FutureWarning)
+# We must use verson 1.5.0
+print('The scikit-learn version is {}.'.format(sklearn.__version__))
+print('The scikit-learn version is {}.'.format(joblib.__version__))
+
+# tests
+import unittest
+
+print("Python Version:-", sys.version)
+print("Pandas Version:-", pd.__version__)
+print("SKLearn Version:-", sklearn.__version__)
 
 # Get the current working directory
 current_working_dir = os.getcwd()
@@ -737,7 +761,7 @@ seed = 123456
 
 """
               ms_input_file,                                       feature_reduce_choice,  transpose, norm, log10
-python ../../GridClassFinal.py Adult_MALDI-TAG_EVOO_EVO-CAN_no-outliers_unnorm_31Oct23.csv Boruta false true true
+python ../../GridClassFinal.py Adult_CAN-MALDI_TAG_unnorm_29Aug2024.csv none false true false # log10 was true
 python ../../GridClassFinal.py DART-PP-unnorm-filter_1Mar23.csv                            Boruta true true false
 python ../../GridClassFinal.py Grade_DART-PP_filter_unnorm_7Mar23.csv                      Boruta true true false
 """
@@ -754,7 +778,40 @@ def str2bool(v):
         raise argparse.ArgumentTypeError('Boolean value expected.')
 
 
+def save_input_params(params, output_dir):
+    """Save input parameters to a JSON file."""
+    params_file = os.path.join(output_dir, 'input_parameters.json')
+    with open(params_file, 'w') as f:
+        json.dump(params, f, indent=4)
+    print(f"Input parameters saved to '{params_file}'.")
+
 def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
+
+    #try:
+    print("Starting ... ")
+    if feature_reduce_choice is None:
+        print("No feature reduction method selected. Proceeding without feature reduction.")
+    else:
+        print(f"Feature reduction method selected: {feature_reduce_choice}")
+
+    # Prepare the output directory
+    output_dir = os.path.join(current_working_dir, 'output')
+    if os.path.exists(output_dir):
+        shutil.rmtree(output_dir)
+    os.makedirs(output_dir, exist_ok=True)
+
+    # Save input parameters to a file
+    input_params = {
+        "ms_input_file": ms_input_file,
+        "feature_reduce_choice": feature_reduce_choice,
+        "transpose": transpose,
+        "norm": norm,
+        "log10": log10,
+    }
+    save_input_params(input_params, output_dir)
+
+
+
     ms_file_name = Path(ms_input_file).stem
     df_file = load_data_from_file(ms_input_file, transpose)
     ms_info = load_data_frame(df_file)
