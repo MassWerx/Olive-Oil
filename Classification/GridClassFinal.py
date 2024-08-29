@@ -3,7 +3,7 @@ import numpy as np
 from scikeras.wrappers import KerasClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.preprocessing import StandardScaler, OneHotEncoder
+from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer, Normalizer
 from boruta import BorutaPy
 from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
 from sklearn.model_selection import RepeatedStratifiedKFold, GridSearchCV, cross_val_score, StratifiedKFold, \
@@ -276,7 +276,11 @@ def get_models(y):
     return list_of_models
 
 
-def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
+def safe_log10(num):
+    return np.log10(np.clip(num, a_min=1e-9, a_max=None))  # Clip values to avoid log10(0)
+
+
+def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
@@ -286,10 +290,22 @@ def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
 
     overall_results = []
 
+    if log10_select:
+        log10_pipe = FunctionTransformer(safe_log10)
+    else:
+        log10_pipe = None
+
+    if normalize_select:
+        norm_pipe = Normalizer(norm='l1')
+    else:
+        norm_pipe = None
+
     for name, model, param_grid in list_of_models:
         print(f'Starting {name}')
 
         pipeline = Pipeline([
+            ('normalize', norm_pipe),
+            ('transform', log10_pipe),  # FunctionTransformer(np.log10)), # log10_select
             ('scaler', StandardScaler()),
             ('Reduction', get_feature_reduction(feature_reduce_choice)),
             ('classifier', model)
@@ -354,7 +370,7 @@ def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
     shutil.rmtree(cachedir)
 
 
-def run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
+def run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
@@ -364,10 +380,22 @@ def run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_ch
 
     overall_results = []
 
+    if log10_select:
+        log10_pipe = FunctionTransformer(safe_log10)
+    else:
+        log10_pipe = None
+
+    if normalize_select:
+        norm_pipe = Normalizer(norm='l1')
+    else:
+        norm_pipe = None
+
     for name, model, param_grid in list_of_models:
         print(f'Starting {name}')
 
         pipeline = Pipeline([
+            ('normalize', norm_pipe),
+            ('transform', log10_pipe),  # FunctionTransformer(np.log10)), # log10_select
             ('scaler', StandardScaler()),
             ('Reduction', get_feature_reduction(feature_reduce_choice)),
             ('classifier', model)
@@ -435,7 +463,7 @@ def run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_ch
     shutil.rmtree(cachedir)
 
 
-def run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
+def run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice, log10_select, normalize_select):
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
@@ -705,30 +733,55 @@ def resetDirs(list_of_models):
         os.makedirs(dirpath)
 
 
-seed = None
+seed = 123456
+
+"""
+              ms_input_file,                                       feature_reduce_choice,  transpose, norm, log10
+python ../../GridClassFinal.py Adult_MALDI-TAG_EVOO_EVO-CAN_no-outliers_unnorm_31Oct23.csv Boruta false true true
+python ../../GridClassFinal.py DART-PP-unnorm-filter_1Mar23.csv                            Boruta true true false
+python ../../GridClassFinal.py Grade_DART-PP_filter_unnorm_7Mar23.csv                      Boruta true true false
+"""
 
 
-def main(ms_input_file, feature_reduce_choice):
+def str2bool(v):
+    if isinstance(v, bool):
+        return v
+    if v.lower() in ('yes', 'true', 't', 'y', '1'):
+        return True
+    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+        return False
+    else:
+        raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
     ms_file_name = Path(ms_input_file).stem
-    df_file = load_data_from_file(ms_input_file, False)
+    df_file = load_data_from_file(ms_input_file, transpose)
     ms_info = load_data_frame(df_file)
     list_of_models = get_models(ms_info['y'])
     resetDirs(list_of_models)
+
     """print(f"------> Starting orig {ms_input_file} / {feature_reduce_choice}... with {seed}")
-    run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
-    print(f"------> Starting CV {ms_input_file} / {feature_reduce_choice}... with {seed}")
-    run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
+    run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)"""
+
+    """print(f"------> Starting CV {ms_input_file} / {feature_reduce_choice}... with {seed}")
+    run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)"""
+
     print(f"------> Starting CV_Score ... with {seed}")
-    run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice)"""
-    print(f"-------> Starting Loop ... with {seed}")
-    run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
+    run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
+
+    """print(f"-------> Starting Loop ... with {seed}")
+    run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)"""
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run regression models with feature reduction.')
     parser.add_argument('ms_input_file', type=str, help='Path to the input CSV file.')
     parser.add_argument('feature_reduce_choice', type=str, help='Choice of feature reduction method.')
+    parser.add_argument('transpose', type=str2bool, help='Transpose file (true/false)')
+    parser.add_argument('norm', type=str2bool, help='Normalize (true/false)')
+    parser.add_argument('log10', type=str2bool, help='Take the log 10 of input in the pipeline (true/false)')
     # parser.add_argument('set_seed', type=str, help='The Seed to use')
     args = parser.parse_args()
 
-    main(args.ms_input_file, args.feature_reduce_choice)#, args.set_seed)
+    main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  #, args.set_seed)
