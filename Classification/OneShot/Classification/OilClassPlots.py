@@ -6,8 +6,7 @@ import numpy as np
 import argparse
 import joblib
 import matplotlib.pyplot as plt
-import numpy as np
-import pandas as pd
+
 import pickle
 import sklearn
 import sys
@@ -281,27 +280,28 @@ def get_model(model_name, y):
         'TensorFlow': MyKerasClf(n_classes=len(np.unique(y)), seed=seed),
         'SVM': SVC(probability=True, random_state=seed),
         'GradientBoosting': GradientBoostingClassifier(random_state=seed),
-        # 'TensorFlow': MyKerasClf(n_classes=len(np.unique(y)), seed=seed) # Example for TensorFlow
     }
 
     best_params = {
-        # norm {'classifier__max_depth': None, 'classifier__min_samples_leaf': 1, 'classifier__min_samples_split': 2, 'classifier__n_estimators': 100}
-        # 27   {'classifier__max_depth': None, 'classifier__min_samples_leaf': 1, 'classifier__min_samples_split': 10, 'classifier__n_estimators': 300}
-        # norm
-        # 'RandomForest': {'max_depth': None, 'min_samples_leaf': 1, 'min_samples_split': 2, 'n_estimators': 100},
-        'RandomForest': {'oob_score': True, 'max_features': 'sqrt', 'n_estimators': 500},
+        'RandomForest': {'oob_score': True, 'max_features': 'sqrt', 'n_estimators': 100},
         'TensorFlow': {'learn_rate': .001, 'weight_constraint': 1},
         'SVM': {'C': 1, 'kernel': 'rbf'},
-        'GradientBoosting': {'learning_rate': 0.1, 'max_depth': 5},
+        'GradientBoosting': {'learning_rate': 0.01, 'max_depth': 3, 'n_estimators' : 100},
     }
 
-    # Set input, name , model, best hyper parameters
+    if model_name not in ml_algo_model:
+        raise KeyError(f"Model '{model_name}' is not in the list of available models: {list(ml_algo_model.keys())}")
+
+    if model_name not in best_params:
+        raise KeyError(
+            f"Parameters for model '{model_name}' are not defined. Available keys are: {list(best_params.keys())}")
+
+    # Set input, name, model, best hyper parameters
     model = ml_algo_model[model_name]
     best_params_algo = best_params[model_name]
     model.set_params(**best_params_algo)
 
     # Write out params
-    # Get hyperparameters
     hyperparameters = model.get_params()
     with open(f'{output_dir}/params_{model_name}.txt', 'w') as f:
         for key, value in hyperparameters.items():
@@ -601,7 +601,11 @@ def safe_log10(num):
     return np.log10(np.clip(num, a_min=1e-9, a_max=None))  # Clip values to avoid log10(0)
 
 
-def run_model_intersection(ms_info, model_name, ms_file_name, feature_reduce_choice, normalize_select, log10_select, seed=42):
+def run_model_score(ms_info, model_name, ms_file_name, feature_reduce_choice, normalize_select, log10_select, seed=42):
+    np.int = np.int32
+    np.float = np.float64
+    np.bool = np.bool_
+
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
@@ -677,7 +681,7 @@ def run_model_intersection(ms_info, model_name, ms_file_name, feature_reduce_cho
     shap_values = explainer.shap_values(X_filtered)
 
     # Handle multiclass SHAP values if necessary
-    shap_values_to_plot = shap_values if isinstance(shap_values, np.ndarray) else shap_values[1]
+    shap_values_to_plot = shap_values[:, :, 0]
 
     # Save SHAP summary plot
     shap.summary_plot(shap_values_to_plot, X_filtered, feature_names=selected_features_final, show=False)
@@ -707,9 +711,148 @@ def run_model_intersection(ms_info, model_name, ms_file_name, feature_reduce_cho
     memory.clear(warn=False)
 
     return (mean_balanced_accuracy, std_balanced_accuracy, mean_recall, std_recall, mean_f1, std_f1, mean_precision,
-            std_precision), (mean_roc_auc, None, None, None), (shap_values_to_plot, X_filtered, selected_features_final)
+            std_precision), (mean_roc_auc, None, None, None), (shap_values, X_filtered, selected_features_final)
 
 
+def run_model_intersection(ms_info, model, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
+    X = ms_info['X']
+    y = ms_info['y']
+    features = ms_info['feature_names']
+
+    print(f'X shape {X.shape}')
+    current_working_dir = os.getcwd()
+    output_dir = os.path.join(current_working_dir, 'output')
+    os.makedirs(output_dir, exist_ok=True)
+
+    cachedir = mkdtemp()
+    memory = Memory(location=cachedir, verbose=0)
+
+    print(f'Starting {model}')
+    outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
+
+    log10_pipe = FunctionTransformer(np.log10) if log10_select else 'passthrough'
+    norm_pipe = Normalizer(norm='l1') if normalize_select else 'passthrough'
+
+    print(f'Starting SHAP generation for {model}')
+
+    pipeline = Pipeline([
+        ('normalize', norm_pipe),
+        ('transform', log10_pipe),
+        ('scaler', StandardScaler()),
+        ('Reduction', get_feature_reduction(feature_reduce_choice)),
+        ('classifier', model)
+    ], memory=memory)
+
+    all_y_true = []
+    all_y_scores = []
+    all_balanced_accuracies = []
+    all_recalls = []
+    all_f1_scores = []
+    all_precisions = []
+
+    selected_features_union = set()
+    selected_features_intersection = None
+
+    # List to store rows of features
+    feature_selection_rows = []
+
+    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+
+        pipeline.fit(X_train, y_train)
+        y_pred = pipeline.predict(X_test)
+        y_score = pipeline.predict_proba(X_test)[:, 1]
+
+        all_y_true.extend(y_test)
+        all_y_scores.extend(y_score)
+        all_balanced_accuracies.append(balanced_accuracy_score(y_test, y_pred))
+        all_recalls.append(recall_score(y_test, y_pred))
+        all_f1_scores.append(f1_score(y_test, y_pred))
+        all_precisions.append(precision_score(y_test, y_pred))
+
+        # Get the features used after reduction
+        reduction_step = pipeline.named_steps['Reduction']
+        if hasattr(reduction_step, 'support_'):
+            support_mask = reduction_step.support_
+            selected_features = [features[i] for i, flag in enumerate(support_mask) if flag]
+        else:
+            selected_features = features  # No reduction step, use all features
+
+        selected_features_union.update(selected_features)  # Track union of all selected features
+
+        if selected_features_intersection is None:
+            selected_features_intersection = set(selected_features)
+        else:
+            selected_features_intersection.intersection_update(selected_features)
+
+        # Add the selected features as a new row
+        feature_selection_rows.append(selected_features)#[str(fold_idx)] + selected_features)
+
+    # Convert the sets to sorted lists before saving
+    selected_features_union_list = sorted(list(selected_features_union))
+    selected_features_intersection_list = sorted(list(selected_features_intersection))
+
+    # Save the union of selected features
+    selected_union_features_file = os.path.join(output_dir, 'selected_features_union.csv')
+    pd.Series(selected_features_union_list).to_csv(selected_union_features_file, index=False)
+    print(f"Union of selected features saved to '{selected_union_features_file}'.")
+
+    # Save the intersection of selected features
+    selected_intersection_features_file = os.path.join(output_dir, 'selected_features_intersection.csv')
+    pd.Series(selected_features_intersection_list).to_csv(selected_intersection_features_file, index=False)
+    print(f"Intersection of selected features saved to '{selected_intersection_features_file}'.")
+
+    # Determine the maximum number of columns needed
+    max_features = max(len(row) for row in feature_selection_rows)
+
+    # Create a DataFrame with dynamic columns
+    column_names = ['Fold'] + [f'Feature_{i + 1}' for i in range(max_features - 1)]
+    feature_selection_df = pd.DataFrame(feature_selection_rows, columns=column_names)
+
+    # Save the feature selection DataFrame to a CSV file
+    feature_selection_file = os.path.join(output_dir, 'feature_selection_per_fold.csv')
+    feature_selection_df.to_csv(feature_selection_file, index=False)
+    print(f"Feature selection per fold saved to '{feature_selection_file}'.")
+
+    # Use the intersection of selected features for SHAP
+    """selected_features_final = selected_features_union_list
+    X_filtered = X[selected_features_final]"""
+
+    # Retrain the model on the entire dataset using the intersection of features
+    selected_features_final = selected_features_intersection_list
+    X_filtered = X[selected_features_final]
+    pipeline.fit(X_filtered, y)
+
+    # Use TreeExplainer for tree-based models like RandomForest
+    explainer = shap.TreeExplainer(pipeline.named_steps['classifier'])
+    shap_values_class_1 = explainer.shap_values(X_filtered)
+
+    # Generate SHAP values
+    """explainer = shap.Explainer(pipeline.named_steps['classifier'], selected_features_final)
+    shap_values_class_1 = explainer(selected_features_final)"""
+
+    # Calculate mean and standard deviation for metrics
+    mean_balanced_accuracy = np.mean(all_balanced_accuracies)
+    std_balanced_accuracy = np.std(all_balanced_accuracies)
+
+    mean_recall = np.mean(all_recalls)
+    std_recall = np.std(all_recalls)
+
+    mean_f1 = np.mean(all_f1_scores)
+    std_f1 = np.std(all_f1_scores)
+
+    mean_precision = np.mean(all_precisions)
+    std_precision = np.std(all_precisions)
+
+    # Calculate ROC curve and AUC
+    fpr, tpr, thresholds = roc_curve(all_y_true, all_y_scores)
+    roc_auc = auc(fpr, tpr)
+
+    memory.clear(warn=False)
+
+    return (mean_balanced_accuracy, std_balanced_accuracy, mean_recall, std_recall, mean_f1, std_f1, mean_precision,
+            std_precision), (roc_auc, fpr, tpr, thresholds), (shap_values_class_1, X_filtered, selected_features_final)
 
 
 def run_model_union(ms_info, model_name, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
@@ -933,6 +1076,8 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
 #    print(f"An error occurred: {e}")
 # Optionally log the error to a file or take other actions as needed
 
+# Command to run
+# Python ../../../OilClassPlots.py Adult_SOY-MALDI_TAG_unnorm_30Aug2024.csv none false true false
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run regression models with feature reduction.')
