@@ -464,6 +464,7 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
                 fold_scores = scores[f'test_{metric}'][start_idx:end_idx]
                 repeat_avg = np.mean(fold_scores)
                 repeat_averages[metric].append(repeat_avg)
+                all_scores[metric].extend(fold_scores)  # Store the raw fold scores
 
         # Calculate mean and standard deviation for each metric
         mean_balanced_accuracy = np.mean(repeat_averages['balanced_accuracy'])
@@ -951,8 +952,8 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
     """print(f"------> Starting orig {ms_input_file} / {feature_reduce_choice}... with {seed}")
     run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)"""
 
-    print(f"------> Starting CV {ms_input_file} / {feature_reduce_choice}... with {seed}")
-    run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
+    """print(f"------> Starting CV {ms_input_file} / {feature_reduce_choice}... with {seed}")
+    run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)"""
 
     print(f"------> Starting CV avg SD {ms_input_file} / {feature_reduce_choice}... with {seed}")
     run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
