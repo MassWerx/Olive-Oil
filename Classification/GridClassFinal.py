@@ -341,6 +341,13 @@ def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, 
         grid_search.fit(X, y)
         best_params = grid_search.best_params_
 
+        # Save the best parameters
+        dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
+        if not os.path.exists(dirpath):
+            os.makedirs(dirpath)
+        with open(f'{dirpath}/best_params_{name}.json', 'w') as f:
+            json.dump(best_params, f, indent=4)
+
         # Use the best parameters for the model
         pipeline.set_params(**best_params)
 
@@ -368,10 +375,124 @@ def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, 
         mean_score = np.mean(all_scores['accuracy'])
         std_score = np.std(all_scores['accuracy'])
 
+        # Save cross-validation scores for debugging
+        scores_df = pd.DataFrame(all_scores)
+        scores_df.to_csv(f'{dirpath}/cv_{name}.csv', index=False)
+
+        with open(f'{dirpath}/metrics_cv_{name}.txt', 'w') as f:
+            f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
+            f.write(f'Bal.Acc.sd: {std_balanced_accuracy}\n')
+            f.write(f'Recall.avg: {mean_recall}\n')
+            f.write(f'Recall.sd: {std_recall}\n')
+            f.write(f'Precision.avg: {mean_precision}\n')
+            f.write(f'Precision.sd: {std_precision}\n')
+            f.write(f'F1.avg: {mean_f1}\n')
+            f.write(f'F1.sd: {std_f1}\n')
+            f.write(f'Accuracy.avg: {mean_score}\n')
+            f.write(f'Accuracy.sd: {std_score}\n')
+
+        if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
+            os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
+
+        create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{name}_{ms_file_name}'), dirpath)
+
+    shutil.rmtree(cachedir)
+
+
+def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select,
+                  n_splits=5, n_repeats=10, round_scores=True):
+    X = ms_info['X']
+    y = ms_info['y']
+    features = ms_info['feature_names']
+    current_working_dir = os.getcwd()
+    cachedir = mkdtemp()
+    memory = Memory(location=cachedir, verbose=0)
+
+    overall_results = []
+
+    if log10_select:
+        log10_pipe = FunctionTransformer(safe_log10)
+    else:
+        log10_pipe = None
+
+    if normalize_select:
+        norm_pipe = Normalizer(norm='l1')
+    else:
+        norm_pipe = None
+
+    for name, model, param_grid in list_of_models:
+        print(f'Starting {name}')
+
+        pipeline = Pipeline([
+            ('normalize', norm_pipe),
+            ('transform', log10_pipe),
+            ('scaler', StandardScaler()),
+            ('Reduction', get_feature_reduction(feature_reduce_choice)),
+            ('classifier', model)
+        ], memory=memory)
+
+        # Perform grid search using the entire data
+        grid_cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
+        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='accuracy')
+        grid_search.fit(X, y)
+        best_params = grid_search.best_params_
+
+        # Save the best parameters
         dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
+        if not os.path.exists(dirpath):
+            os.makedirs(dirpath)
+        with open(f'{dirpath}/best_params_{name}.json', 'w') as f:
+            json.dump(best_params, f, indent=4)
+
+        # Use the best parameters for the model
+        pipeline.set_params(**best_params)
+
+        outer_cv = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=seed)
+        all_scores = {'accuracy': [], 'balanced_accuracy': [], 'recall': [], 'f1': [], 'precision': []}
+
+        scores = cross_validate(pipeline, X, y, cv=outer_cv,
+                                scoring=['accuracy', 'balanced_accuracy', 'recall', 'f1', 'precision'])
+
+        # Process scores for each repeat
+        repeat_averages = {metric: [] for metric in all_scores.keys()}
+
+        for repeat in range(n_repeats):
+            start_idx = repeat * n_splits
+            end_idx = start_idx + n_splits
+
+            for metric in all_scores.keys():
+                fold_scores = scores[f'test_{metric}'][start_idx:end_idx]
+                repeat_avg = np.mean(fold_scores)
+                repeat_averages[metric].append(repeat_avg)
+
+        # Calculate mean and standard deviation for each metric
+        mean_balanced_accuracy = np.mean(repeat_averages['balanced_accuracy'])
+        std_balanced_accuracy = np.std(repeat_averages['balanced_accuracy'])
+        mean_recall = np.mean(repeat_averages['recall'])
+        std_recall = np.std(repeat_averages['recall'])
+        mean_f1 = np.mean(repeat_averages['f1'])
+        std_f1 = np.std(repeat_averages['f1'])
+        mean_precision = np.mean(repeat_averages['precision'])
+        std_precision = np.std(repeat_averages['precision'])
+        mean_score = np.mean(repeat_averages['accuracy'])
+        std_score = np.std(repeat_averages['accuracy'])
+
+        if round_scores:
+            mean_balanced_accuracy = round(mean_balanced_accuracy, 3)
+            std_balanced_accuracy = round(std_balanced_accuracy, 3)
+            mean_recall = round(mean_recall, 3)
+            std_recall = round(std_recall, 3)
+            mean_f1 = round(mean_f1, 3)
+            std_f1 = round(std_f1, 3)
+            mean_precision = round(mean_precision, 3)
+            std_precision = round(std_precision, 3)
+            mean_score = round(mean_score, 3)
+            std_score = round(std_score, 3)
 
         # Save cross-validation scores for debugging
         scores_df = pd.DataFrame(all_scores)
+        if round_scores:
+            scores_df = scores_df.round(3)
         scores_df.to_csv(f'{dirpath}/cv_{name}.csv', index=False)
 
         with open(f'{dirpath}/metrics_cv_{name}.txt', 'w') as f:
@@ -437,10 +558,19 @@ def run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_ch
         outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
 
         accuracy_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='accuracy')
+        print("Accuracy scores done")
+
         balanced_accuracy_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='balanced_accuracy')
+        print("Balanced accuracy scores done")
+
         recall_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='recall')
+        print("Recall scores done")
+
         f1_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='f1')
+        print("F1 scores done")
+
         precision_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='precision')
+        print("Precision scores done")
 
         # Calculate mean and standard deviation for metrics
         mean_balanced_accuracy = np.mean(balanced_accuracy_scores)
@@ -821,11 +951,14 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
     """print(f"------> Starting orig {ms_input_file} / {feature_reduce_choice}... with {seed}")
     run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)"""
 
-    """print(f"------> Starting CV {ms_input_file} / {feature_reduce_choice}... with {seed}")
-    run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)"""
+    print(f"------> Starting CV {ms_input_file} / {feature_reduce_choice}... with {seed}")
+    run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
 
-    print(f"------> Starting CV_Score ... with {seed}")
-    run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
+    print(f"------> Starting CV avg SD {ms_input_file} / {feature_reduce_choice}... with {seed}")
+    run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
+
+    # print(f"------> Starting CV_Score ... with {seed}")
+    # run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
 
     """print(f"-------> Starting Loop ... with {seed}")
     run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)"""
