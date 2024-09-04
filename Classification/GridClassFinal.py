@@ -307,7 +307,6 @@ def safe_log10(num):
 def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
     X = ms_info['X']
     y = ms_info['y']
-    features = ms_info['feature_names']
     current_working_dir = os.getcwd()
     cachedir = mkdtemp()
     memory = Memory(location=cachedir, verbose=0)
@@ -403,7 +402,6 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
                   n_splits=5, n_repeats=10, round_scores=True):
     X = ms_info['X']
     y = ms_info['y']
-    features = ms_info['feature_names']
     current_working_dir = os.getcwd()
     cachedir = mkdtemp()
     memory = Memory(location=cachedir, verbose=0)
@@ -495,6 +493,20 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
         if round_scores:
             scores_df = scores_df.round(3)
         scores_df.to_csv(f'{dirpath}/cv_{name}.csv', index=False)
+        all_y_true = []
+        all_y_scores = []
+        for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
+            X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+            y_train, y_test = y[train_idx], y[test_idx]
+
+            pipeline.fit(X_train, y_train)
+            y_score = pipeline.predict_proba(X_test)[:, 1]
+
+            all_y_true.extend(y_test)
+            all_y_scores.extend(y_score)
+
+        fpr, tpr, thresholds = roc_curve(all_y_true, all_y_scores)
+        roc_auc = round(auc(fpr, tpr), 3)
 
         with open(f'{dirpath}/metrics_cv_{name}.txt', 'w') as f:
             f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
@@ -507,6 +519,37 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
             f.write(f'F1.sd: {std_f1}\n')
             f.write(f'Accuracy.avg: {mean_score}\n')
             f.write(f'Accuracy.sd: {std_score}\n')
+            f.write(f'ROC: {roc_auc}\n')
+
+        # Generate the plot with markers
+        fig = px.area(
+            x=fpr, y=tpr,
+            title=f'ROC Curve (AUC={auc(fpr, tpr):.2f})',
+            labels=dict(x='False Positive Rate', y='True Positive Rate'),
+            width=2100, height=1500  # Set size to match 7x5 inches at 300 DPI
+        )
+
+        # Add the diagonal line
+        fig.add_shape(
+            type='line', line=dict(dash='dash'),
+            x0=0, x1=1, y0=0, y1=1
+        )
+
+        # Customize axes
+        fig.update_yaxes(scaleanchor="x", scaleratio=1)
+        fig.update_xaxes(constrain='domain')
+
+        # Customize axes and text sizes
+        fig.update_layout(
+            title=dict(font=dict(size=48)),  # Adjust title font size
+            xaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),
+            # Adjust x-axis title and tick font size
+            yaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),
+            # Adjust y-axis title and tick font size
+            margin=dict(l=80, r=40, t=80, b=40)
+        )
+
+        fig.write_image(f'{dirpath}/{name}_ROC.png')
 
         if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
             os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
@@ -519,7 +562,6 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
 def run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
     X = ms_info['X']
     y = ms_info['y']
-    features = ms_info['feature_names']
     current_working_dir = os.getcwd()
     cachedir = mkdtemp()
     memory = Memory(location=cachedir, verbose=0)
@@ -621,7 +663,6 @@ def run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_ch
 def run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice, log10_select, normalize_select):
     X = ms_info['X']
     y = ms_info['y']
-    features = ms_info['feature_names']
     current_working_dir = os.getcwd()
 
     cachedir = mkdtemp()
@@ -719,7 +760,7 @@ def run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice
 def run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
     X = ms_info['X']
     y = ms_info['y']
-    features = ms_info['feature_names']
+
     cachedir = mkdtemp()
     memory = Memory(location=cachedir, verbose=0)
 
@@ -792,17 +833,6 @@ def run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
                                       recall_score(y_test, y_pred), f1_score(y_test, y_pred),
                                       precision_score(y_test, y_pred)])
 
-                # Store features used for this split
-                if hasattr(best_model.named_steps['Reduction'], 'support_'):
-                    selected_features = [features[i] for i in range(len(features)) if
-                                         best_model.named_steps['Reduction'].support_[i]]
-                elif hasattr(best_model.named_steps['Reduction'], 'selected_features_'):
-                    selected_features = [features[i] for i in range(len(features)) if
-                                         best_model.named_steps['Reduction'].selected_features_[i]]
-                else:
-                    selected_features = features  # Fallback if no feature selection
-
-                all_features_data.append(selected_features)
 
             all_repeat_mean_accuracies.append(np.mean(repeat_accuracy))
             all_repeat_std_accuracies.append(np.std(repeat_accuracy))
@@ -893,8 +923,8 @@ seed = 123456
 """
               ms_input_file,                                       feature_reduce_choice,  transpose, norm, log10
 python ../../GridClassFinal.py Adult_CAN-MALDI_TAG_unnorm_29Aug2024.csv none false true false # log10 was true
-python ../../GridClassFinal.py DART-PP-unnorm-filter_1Mar23.csv                            Boruta true true false
-python ../../GridClassFinal.py Grade_DART-PP_filter_unnorm_7Mar23.csv                      Boruta true true false
+python ../../GridClassFinal.py DART-PP-unnorm-filter_1Mar23.csv                            Boruta false true false
+python ../../GridClassFinal.py Grade_DART-PP_filter_unnorm_7Mar23.csv                      Boruta false true false
 """
 
 
