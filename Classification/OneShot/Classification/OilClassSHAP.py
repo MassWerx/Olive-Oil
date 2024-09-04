@@ -87,7 +87,7 @@ def load_data_frame(input_dataframe):
     labels = input_dataframe.iloc[:, 1]
     data_table = input_dataframe.iloc[:, 2:]
     features = input_dataframe.iloc[:, 2:].columns.values
-    features_names = features#.to_numpy().astype(str)
+    features_names = features  #.to_numpy().astype(str)
 
     label_table = pd.get_dummies(labels)
     class_names = label_table.columns.to_numpy()
@@ -251,11 +251,12 @@ def get_model(model_name, y):
     }
 
     best_params = {
-        'RandomForest': {'max_depth': "null", 'min_samples_lear': 1, 'min_samples_split': 2,'n_estimators': 100}, # Adult CAN
-        'TensorFlow': {'learn_rate': .001, 'weight_constraint': 0}, # Grade
+        'RandomForest': {'max_depth': "null", 'min_samples_lear': 1, 'min_samples_split': 2, 'n_estimators': 100},
+        # Adult CAN
+        'TensorFlow': {'learn_rate': .001, 'weight_constraint': 0},  # Grade
         'SVM': {'C': 10, 'kernel': 'linear'},  #'SVM': {'C': 1, 'kernel': 'rbf'},, 'probability':'True' Adult SOY
-        'GradientBoosting': {'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 100}, # NONE
-        'LogisticRegression': {'C': 1, 'penalty': "l2", 'solver': "lbfgs"}, # Freshness
+        'GradientBoosting': {'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 100},  # NONE
+        'LogisticRegression': {'C': 1, 'penalty': "l2", 'solver': "lbfgs"},  # Freshness
     }
 
     if model_name not in ml_algo_model:
@@ -339,18 +340,46 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
     print(f'{len(y)} & {len(selected_features)} = {selected_features}')
     X_filtered = X[selected_features]
 
+    # Convert X_filtered to a NumPy array
+    X_filtered_np = X_filtered.values  # This converts the DataFrame to a NumPy array
+
     # Use SHAP LinearExplainer for SVC
-    if model == 'RandomForest':
+    # Use SHAP LinearExplainer for SVC
+    if isinstance(model, MyKerasClf):
+        explainer = shap.GradientExplainer(pipeline.named_steps['classifier'].clf.model, X_filtered_np)
+        shap_values = explainer.shap_values(X_filtered_np)
+
+        # Convert shap_values to the required format
+        shap_values = np.array(shap_values)
+        shap_values = shap.Explanation(
+            values=shap_values,
+            base_values=np.zeros(shap_values.shape[0]),  # Provide base values if applicable
+            data=X_filtered_np,
+            feature_names=selected_features  # Include feature names
+        )
+
+    elif model == 'RandomForest':
         explainer = shap.TreeExplainer(pipeline.named_steps['classifier'])
         shap_values = explainer.shap_values(X_filtered)
+
+        if len(shap_values.shape) == 3:
+            shap_values = shap_values[:, :, 0]  # Select class 0's SHAP values
+        shap_values = shap.Explanation(shap_values, base_values=None, data=X_filtered)
+
     else:
         explainer = shap.Explainer(pipeline.named_steps['classifier'], X_filtered)
         shap_values = explainer(X_filtered)
 
     # Ensure SHAP values shape matches the feature data shape
+    assert shap_values.shape[1] == X_filtered.shape[1], "Mismatch between SHAP values and feature data"
+
+    # Ensure SHAP values shape matches the feature data shape
     assert shap_values.values.shape[1] == X_filtered.shape[1], "Mismatch between SHAP values and feature data"
 
-
+    """
+    Even though you’re working with binary classification, the SHAP library’s handling of 
+    RandomForestClassifier can introduce complexity by generating 3D SHAP values.
+    """
     if len(shap_values.shape) == 3:
         # Multi-class output (e.g., GBC , RF with TreeExplainer)
         shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
@@ -359,11 +388,10 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
         pass  # No adjustment needed
 
     # Generate beeswarm plot for all features
-    shap.summary_plot(shap_values, plot_type="dot",  show=False)
+    shap.summary_plot(shap_values, plot_type="dot", show=False)
     plt.savefig(f'{output_dir}/shap_beeswarm_plot.png', dpi=300, bbox_inches='tight')
     plt.close()
     print("Beeswarm plot saved as 'shap_beeswarm_plot.png'")
-
 
     plt.figure()
     shap.summary_plot(shap_values, plot_type="bar", show=False)
@@ -387,7 +415,6 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
     plt.savefig(f'{output_dir}/shap_combined_plots.png', dpi=300)
     plt.close()
     print("Summary plot for all features saved as 'shap_combined_plots.png'")
-
 
 
 def get_results(model_name, ms_input_file, feature_reduce_choice, transpose_select, norm, log10):
@@ -463,8 +490,8 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
 
     transpose_select = transpose
     feature_reduce_choice = feature_reduce_choice  # None #'Boruta' #'Boruta' #'Boruta'
-    # LogisticRegression SVM
-    model_name = 'LogisticRegression'  # 'TensorFlow' #'RandomForest'#'RandomForest' #'GradientBoosting' #'SVM' #'ElasticNet'
+    # LogisticRegression SVM # 'TensorFlow' #'RandomForest'#'RandomForest' #'GradientBoosting' #'SVM' #'ElasticNet'
+    model_name = 'TensorFlow'
     results, ms_info = get_results(model_name, ms_input_file, feature_reduce_choice, transpose_select, norm, log10)
     ms_file_name = Path(ms_input_file).stem
 
