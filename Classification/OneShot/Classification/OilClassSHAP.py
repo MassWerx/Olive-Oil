@@ -15,6 +15,7 @@ import tensorflow as tf
 import shap
 
 from scikeras.wrappers import KerasClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer, Normalizer
 from boruta import BorutaPy
@@ -246,13 +247,15 @@ def get_model(model_name, y):
         'TensorFlow': MyKerasClf(n_classes=len(np.unique(y)), seed=seed),
         'SVM': SVC(probability=True, random_state=seed),
         'GradientBoosting': GradientBoostingClassifier(random_state=seed),
+        'LogisticRegression': LogisticRegression(max_iter=1000, random_state=seed),
     }
 
     best_params = {
-        'RandomForest': {'oob_score': True, 'max_features': 'sqrt', 'n_estimators': 100},
-        'TensorFlow': {'learn_rate': .001, 'weight_constraint': 1},
-        'SVM': {'C': 1, 'kernel': 'linear'},  #'SVM': {'C': 1, 'kernel': 'rbf'},, 'probability':'True'
-        'GradientBoosting': {'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 100},
+        'RandomForest': {'max_depth': "null", 'min_samples_lear': 1, 'min_samples_split': 2,'n_estimators': 100}, # Adult CAN
+        'TensorFlow': {'learn_rate': .001, 'weight_constraint': 0}, # Grade
+        'SVM': {'C': 10, 'kernel': 'linear'},  #'SVM': {'C': 1, 'kernel': 'rbf'},, 'probability':'True' Adult SOY
+        'GradientBoosting': {'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 100}, # NONE
+        'LogisticRegression': {'C': 1, 'penalty': "l2", 'solver': "lbfgs"}, # Freshness
     }
 
     if model_name not in ml_algo_model:
@@ -333,7 +336,7 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
     else:
         selected_features = features  # No reduction step, use all features
 
-    print(f'{len(X)} & {len(selected_features)}')
+    print(f'{len(y)} & {len(selected_features)} = {selected_features}')
     X_filtered = X[selected_features]
 
     # Use SHAP LinearExplainer for SVC
@@ -460,7 +463,8 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
 
     transpose_select = transpose
     feature_reduce_choice = feature_reduce_choice  # None #'Boruta' #'Boruta' #'Boruta'
-    model_name = 'RandomForest'  # 'TensorFlow' #'RandomForest'#'RandomForest' #'GradientBoosting' #'SVM' #'ElasticNet'
+    # LogisticRegression SVM
+    model_name = 'LogisticRegression'  # 'TensorFlow' #'RandomForest'#'RandomForest' #'GradientBoosting' #'SVM' #'ElasticNet'
     results, ms_info = get_results(model_name, ms_input_file, feature_reduce_choice, transpose_select, norm, log10)
     ms_file_name = Path(ms_input_file).stem
 
