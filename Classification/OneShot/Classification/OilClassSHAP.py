@@ -45,6 +45,8 @@ from plotly.subplots import make_subplots
 from zipfile import ZipFile
 from os.path import basename
 
+import pickle
+
 # We must use verson 1.5.0
 print('The scikit-learn version is {}.'.format(sklearn.__version__))
 print('The scikit-learn version is {}.'.format(joblib.__version__))
@@ -86,7 +88,7 @@ def load_data_frame(input_dataframe):
     samples = input_dataframe.iloc[:, 0]
     labels = input_dataframe.iloc[:, 1]
     data_table = input_dataframe.iloc[:, 2:]
-    features = input_dataframe.iloc[:, 2:].columns.values
+    features = input_dataframe.iloc[:, 2:].columns.values.tolist()
     features_names = features  #.to_numpy().astype(str)
 
     label_table = pd.get_dummies(labels)
@@ -251,7 +253,7 @@ def get_model(model_name, y):
     }
 
     best_params = {
-        'RandomForest': {'max_depth': "null", 'min_samples_lear': 1, 'min_samples_split': 2, 'n_estimators': 100},
+        'RandomForest': {'min_samples_leaf': 1, 'min_samples_split': 2, 'n_estimators': 100},
         # Adult CAN
         'TensorFlow': {'learn_rate': .001, 'weight_constraint': 0},  # Grade
         'SVM': {'C': 10, 'kernel': 'linear'},  #'SVM': {'C': 1, 'kernel': 'rbf'},, 'probability':'True' Adult SOY
@@ -299,10 +301,67 @@ def get_feature_reduction(feature_reduce_choice):
     return reduction_fun
 
 
+def plot_roc(pipeline, ms_info, model_name, n_splits=5, n_repeats=10):
+    X = ms_info['X']
+    y = ms_info['y']
+    features = ms_info['feature_names']
+    outer_cv = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=seed)
+
+    current_working_dir = os.getcwd()
+    output_dir = os.path.join(current_working_dir, 'output')
+    all_y_true = []
+    all_y_scores = []
+    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+
+        pipeline.fit(X_train, y_train)
+        y_score = pipeline.predict_proba(X_test)[:, 1]
+
+        all_y_true.extend(y_test)
+        all_y_scores.extend(y_score)
+
+    fpr, tpr, thresholds = roc_curve(all_y_true, all_y_scores)
+    roc_auc = round(auc(fpr, tpr), 3)
+    # ROC
+    # Generate the plot with markers
+    roc_data = pd.DataFrame({'fpr': fpr, 'tpr': tpr, 'thresholds': thresholds})
+    roc_data.to_csv(f'{output_dir}/roc_data_{model_name}.csv', index=False)
+    fig = px.area(
+        x=fpr, y=tpr,
+        title=f'ROC Curve (AUC={auc(fpr, tpr):.2f})',
+        labels=dict(x='False Positive Rate', y='True Positive Rate'),
+        width=2100, height=1500  # Set size to match 7x5 inches at 300 DPI
+    )
+
+    # Add the diagonal line
+    fig.add_shape(
+        type='line', line=dict(dash='dash'),
+        x0=0, x1=1, y0=0, y1=1
+    )
+
+    # Customize axes
+    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+    fig.update_xaxes(constrain='domain')
+
+    # Customize axes and text sizes
+    fig.update_layout(
+        title=dict(font=dict(size=48)),  # Adjust title font size
+        xaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),  # Adjust x-axis title and tick font size
+        yaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),  # Adjust y-axis title and tick font size
+        margin=dict(l=80, r=40, t=80, b=40)
+    )
+
+    fig.write_image(f'{output_dir}/{model_name}_ROC.png')
+
+
 def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
+
+    # Define a threshold for filtering
+    threshold = 1e-5
 
     print(f'X shape {X.shape}')
     current_working_dir = os.getcwd()
@@ -343,10 +402,12 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
     # Convert X_filtered to a NumPy array
     X_filtered_np = X_filtered.values  # This converts the DataFrame to a NumPy array
 
-    # Use SHAP LinearExplainer for SVC
-    # Use SHAP LinearExplainer for SVC
+    # Use SHAP explainers based on model type
+    # Grade
     if isinstance(model, MyKerasClf):
-        explainer = shap.GradientExplainer(pipeline.named_steps['classifier'].clf.model, X_filtered_np)
+        print("Using KernelExplainer for ANN")
+        # explainer = shap.GradientExplainer(pipeline.named_steps['classifier'].clf.model, X_filtered)
+        explainer = shap.KernelExplainer(pipeline.named_steps['classifier'].clf.model, X_filtered)
         shap_values = explainer.shap_values(X_filtered_np)
 
         # Convert shap_values to the required format
@@ -358,28 +419,79 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
             feature_names=selected_features  # Include feature names
         )
 
-    elif model == 'RandomForest':
+    # Freshness
+    elif isinstance(pipeline.named_steps['classifier'], LogisticRegression):
+        print("\nUsing LinearExplainer for LogisticRegression with probabilities\n")
+        # For Logistic Regression model using LinearExplainer
+        # explainer = shap.LinearExplainer(pipeline.named_steps['classifier'], X_filtered, model_output='probability')
+        explainer = shap.KernelExplainer(pipeline.named_steps['classifier'].predict_proba, X_filtered,
+                                         model_output='probability')
+        shap_values = explainer.shap_values(X_filtered_np)
+
+        # Convert shap_values to the required format
+        shap_values = shap.Explanation(
+            values=shap_values,
+            base_values=explainer.expected_value,  # LinearExplainer computes expected values automatically
+            data=X_filtered_np,
+            feature_names=selected_features
+        )
+
+    # Adult Soy
+    elif isinstance(pipeline.named_steps['classifier'], SVC):
+        print("\nUsing KernelExplainer for SVC\n")
+        # For SVM model
+        explainer = shap.KernelExplainer(pipeline.named_steps['classifier'].predict_proba, X_filtered)
+        shap_values = explainer.shap_values(X_filtered_np)
+
+        # Convert shap_values to the required format
+        # Select SHAP values for class 1 (positive class)
+        # shap_values = shap_values[1]  # Choose class 1 for binary classification
+        shap_values = np.array(shap_values)
+
+        shap_values = shap.Explanation(
+            values=shap_values,
+            data=X_filtered_np,
+            feature_names=selected_features  # Include feature names
+        )
+
+    # Adult Can
+    elif isinstance(pipeline.named_steps['classifier'], RandomForestClassifier):
+        print("Using TreeExplainer for RF")
+        """
+        setting  model_output='probability'
+        gives error
+        Only model_output="raw" is supported for feature_perturbation="tree_path_dependent" 
+        """
+
         explainer = shap.TreeExplainer(pipeline.named_steps['classifier'])
         shap_values = explainer.shap_values(X_filtered)
 
-        if len(shap_values.shape) == 3:
-            shap_values = shap_values[:, :, 0]  # Select class 0's SHAP values
-        shap_values = shap.Explanation(shap_values, base_values=None, data=X_filtered)
+        # Convert shap_values to the required format
+        shap_values = np.array(shap_values)
+        shap_values = shap.Explanation(
+            values=shap_values,
+            base_values=np.zeros(shap_values.shape[0]),  # Provide base values if applicable
+            data=X_filtered_np,
+            feature_names=selected_features  # Include feature names
+        )
+
+        # Works for this case!
+        """explainer = shap.Explainer(pipeline.named_steps['classifier'], X_filtered)
+        shap_values = explainer(X_filtered)"""
 
     else:
         explainer = shap.Explainer(pipeline.named_steps['classifier'], X_filtered)
         shap_values = explainer(X_filtered)
 
+    # Filter out almost-zero SHAP values
     # Ensure SHAP values shape matches the feature data shape
-    assert shap_values.shape[1] == X_filtered.shape[1], "Mismatch between SHAP values and feature data"
-
-    # Ensure SHAP values shape matches the feature data shape
-    assert shap_values.values.shape[1] == X_filtered.shape[1], "Mismatch between SHAP values and feature data"
+    # assert shap_values.shape[1] == X_filtered.shape[1], "Mismatch between SHAP values and feature data"
 
     """
     Even though you’re working with binary classification, the SHAP library’s handling of 
     RandomForestClassifier can introduce complexity by generating 3D SHAP values.
     """
+    
     if len(shap_values.shape) == 3:
         # Multi-class output (e.g., GBC , RF with TreeExplainer)
         shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
@@ -387,19 +499,27 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
         # Binary output
         pass  # No adjustment needed
 
+    # Assuming you want to store SHAP values, feature names, and model predictions
+    shap_data = {
+        'shap_values': shap_values,
+        'features': selected_features,
+        'X_filtered': X_filtered  # Input features used for SHAP
+    }
+    # Save to a pickle file
+    with open(f'{output_dir}/shap_data.pkl', 'wb') as f:
+        pickle.dump(shap_data, f)
+
     # Generate beeswarm plot for all features
-    shap.summary_plot(shap_values, plot_type="dot", show=False)
+    shap.summary_plot(shap_values, plot_type="dot", feature_names=selected_features, max_display=5,show=False)
     plt.savefig(f'{output_dir}/shap_beeswarm_plot.png', dpi=300, bbox_inches='tight')
     plt.close()
     print("Beeswarm plot saved as 'shap_beeswarm_plot.png'")
 
     plt.figure()
-    shap.summary_plot(shap_values, plot_type="bar", show=False)
+    shap.summary_plot(shap_values, plot_type="bar", feature_names=selected_features,max_display=5, show=False)
     plt.savefig(f'{output_dir}/shap_summary_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
     print("Summary plot for all features saved as 'shap_summary_plot_all_folds.png'")
-
-    memory.clear(warn=False)
 
     bar_plot = Image.open(f'{output_dir}/shap_beeswarm_plot.png')
     summary_plot = Image.open(f'{output_dir}/shap_summary_plot_all_folds.png')
@@ -416,6 +536,10 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
     plt.close()
     print("Summary plot for all features saved as 'shap_combined_plots.png'")
 
+    memory.clear(warn=False)  # we want to reuse it.
+
+    return pipeline
+
 
 def get_results(model_name, ms_input_file, feature_reduce_choice, transpose_select, norm, log10):
     print(f"Starting ... {model_name} / {ms_input_file}")
@@ -424,10 +548,11 @@ def get_results(model_name, ms_input_file, feature_reduce_choice, transpose_sele
     ms_info = load_data_frame(df_file)
     the_model = get_model(model_name, ms_info['y'])
     # <------------------------------------------
-    results = run_model(ms_info, the_model, ms_file_name, feature_reduce_choice, norm, log10)
+    pipeline = run_model(ms_info, the_model, ms_file_name, feature_reduce_choice, norm, log10)
+
     # results = run_model_union(ms_info, the_model, ms_file_name, feature_reduce_choice, norm, log10)
     # <------------------------------------------
-    return results, ms_info
+    return pipeline, ms_info
 
 
 seed = 1234546
@@ -464,7 +589,21 @@ def save_input_params(params, output_dir):
     print(f"Input parameters saved to '{params_file}'.")
 
 
-def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
+"""
+Keys - Adulteration (CAN) - RF, Adulteration (SOY) - SVM, Freshness - LR, Grade - ANN
+models - LogisticRegression, SVM, 'TensorFlow', 'RandomFortest'
+Grade
+python ../OilClassSHAP.py Grade_PP_unnorm_31Aug2024.csv TensorFlow Boruta false true false
+Fresh
+python ../OilClassSHAP.py Freshness_PP_unnorm_3Sep2024.csv LogisticRegression Boruta false true false
+Adult Soy
+python ../OilClassSHAP.py Adult_SOY-MALDI_TAG_unnorm_30Aug2024.csv SVM none false true false
+Adult Can
+python ../OilClassSHAP.py Adult_CAN-MALDI_TAG_unnorm_29Aug2024.csv RandomForest none false true false
+"""
+
+
+def main(model_name, ms_input_file, feature_reduce_choice, transpose, norm, log10):
     #try:
     print("Starting ... ")
     if feature_reduce_choice is None:
@@ -481,6 +620,7 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
     # Save input parameters to a file
     input_params = {
         "ms_input_file": ms_input_file,
+        "model": model_name,
         "feature_reduce_choice": feature_reduce_choice,
         "transpose": transpose,
         "norm": norm,
@@ -491,9 +631,11 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
     transpose_select = transpose
     feature_reduce_choice = feature_reduce_choice  # None #'Boruta' #'Boruta' #'Boruta'
     # LogisticRegression SVM # 'TensorFlow' #'RandomForest'#'RandomForest' #'GradientBoosting' #'SVM' #'ElasticNet'
-    model_name = 'TensorFlow'
-    results, ms_info = get_results(model_name, ms_input_file, feature_reduce_choice, transpose_select, norm, log10)
+
+    pipeline, ms_info = get_results(model_name, ms_input_file, feature_reduce_choice, transpose_select, norm, log10)
+    # plot_roc(pipeline,ms_info,model_name)
     ms_file_name = Path(ms_input_file).stem
+
 
     if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
         os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
@@ -511,6 +653,7 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run regression models with feature reduction.')
     parser.add_argument('ms_input_file', type=str, help='Path to the input CSV file.')
+    parser.add_argument('model_name', type=str, help='Model Name.')
     parser.add_argument('feature_reduce_choice', type=str_or_none, nargs='?', default=None,
                         help='Choice of feature reduction method. Defaults to None.')
     parser.add_argument('transpose', type=str2bool, help='Transpose file (true/false)')
@@ -518,4 +661,5 @@ if __name__ == "__main__":
     parser.add_argument('log10', type=str2bool, help='Take the log 10 of input in the pipeline (true/false)')
     args = parser.parse_args()
 
-    main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  # , args.set_seed)
+    main(args.model_name, args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm,
+         args.log10)  # , args.set_seed)
