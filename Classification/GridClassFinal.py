@@ -336,7 +336,7 @@ def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, 
 
         # Perform grid search using the entire data
         grid_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='accuracy')
+        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='neg_log_loss')
         grid_search.fit(X, y)
         best_params = grid_search.best_params_
 
@@ -398,6 +398,62 @@ def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, 
     shutil.rmtree(cachedir)
 
 
+
+def plot_roc(ms_info, pipeline, model_name, output_dir, n_splits=5, n_repeats=10):
+    X = ms_info['X']
+    y = ms_info['y']
+    features = ms_info['feature_names']
+    outer_cv = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=seed)
+
+    all_y_true = []
+    all_y_scores = []
+    for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
+        print(f'Step = {fold_idx}')
+        X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
+        y_train, y_test = y[train_idx], y[test_idx]
+
+        pipeline.fit(X_train, y_train)
+        y_score = pipeline.predict_proba(X_test)[:, 1]
+
+        all_y_true.extend(y_test)
+        all_y_scores.extend(y_score)
+
+    fpr, tpr, thresholds = roc_curve(all_y_true, all_y_scores)
+    roc_auc = round(auc(fpr, tpr), 3)
+    # ROC
+    # Generate the plot with markers
+    roc_data = pd.DataFrame({'fpr': fpr, 'tpr': tpr, 'thresholds': thresholds})
+    roc_data.to_csv(f'{output_dir}/roc_data_{model_name}.csv', index=False)
+    fig = px.area(
+        x=fpr, y=tpr,
+        title=f'ROC Curve (AUC={auc(fpr, tpr):.2f})',
+        labels=dict(x='False Positive Rate', y='True Positive Rate'),
+        width=2100, height=1500  # Set size to match 7x5 inches at 300 DPI
+    )
+
+    # Add the diagonal line
+    fig.add_shape(
+        type='line', line=dict(dash='dash'),
+        x0=0, x1=1, y0=0, y1=1
+    )
+
+    # Customize axes
+    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+    fig.update_xaxes(constrain='domain')
+
+    # Customize axes and text sizes
+    fig.update_layout(
+        title=dict(font=dict(size=48)),  # Adjust title font size
+        xaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),  # Adjust x-axis title and tick font size
+        yaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),  # Adjust y-axis title and tick font size
+        margin=dict(l=80, r=40, t=80, b=40)
+    )
+
+    fig.write_image(f'{output_dir}/{model_name}_ROC.png')
+
+    return roc_auc
+
+
 def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select,
                   n_splits=5, n_repeats=10, round_scores=True):
     X = ms_info['X']
@@ -431,7 +487,7 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
 
         # Perform grid search using the entire data
         grid_cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
-        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='accuracy')
+        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='neg_log_loss')
         grid_search.fit(X, y)
         best_params = grid_search.best_params_
 
@@ -493,20 +549,8 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
         if round_scores:
             scores_df = scores_df.round(3)
         scores_df.to_csv(f'{dirpath}/cv_{name}.csv', index=False)
-        all_y_true = []
-        all_y_scores = []
-        for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
-            X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-            y_train, y_test = y[train_idx], y[test_idx]
 
-            pipeline.fit(X_train, y_train)
-            y_score = pipeline.predict_proba(X_test)[:, 1]
-
-            all_y_true.extend(y_test)
-            all_y_scores.extend(y_score)
-
-        fpr, tpr, thresholds = roc_curve(all_y_true, all_y_scores)
-        roc_auc = round(auc(fpr, tpr), 3)
+        roc_auc = plot_roc(ms_info, pipeline, name, dirpath)
 
         with open(f'{dirpath}/metrics_cv_{name}.txt', 'w') as f:
             f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
@@ -519,37 +563,8 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
             f.write(f'F1.sd: {std_f1}\n')
             f.write(f'Accuracy.avg: {mean_score}\n')
             f.write(f'Accuracy.sd: {std_score}\n')
-            f.write(f'ROC: {roc_auc}\n')
+            f.write(f'AUC: {roc_auc}\n')
 
-        # Generate the plot with markers
-        fig = px.area(
-            x=fpr, y=tpr,
-            title=f'ROC Curve (AUC={auc(fpr, tpr):.2f})',
-            labels=dict(x='False Positive Rate', y='True Positive Rate'),
-            width=2100, height=1500  # Set size to match 7x5 inches at 300 DPI
-        )
-
-        # Add the diagonal line
-        fig.add_shape(
-            type='line', line=dict(dash='dash'),
-            x0=0, x1=1, y0=0, y1=1
-        )
-
-        # Customize axes
-        fig.update_yaxes(scaleanchor="x", scaleratio=1)
-        fig.update_xaxes(constrain='domain')
-
-        # Customize axes and text sizes
-        fig.update_layout(
-            title=dict(font=dict(size=48)),  # Adjust title font size
-            xaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),
-            # Adjust x-axis title and tick font size
-            yaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),
-            # Adjust y-axis title and tick font size
-            margin=dict(l=80, r=40, t=80, b=40)
-        )
-
-        fig.write_image(f'{dirpath}/{name}_ROC.png')
 
         if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
             os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
@@ -920,12 +935,6 @@ def resetDirs(list_of_models):
 
 seed = 123456
 
-"""
-              ms_input_file,                                       feature_reduce_choice,  transpose, norm, log10
-python ../../GridClassFinal.py Adult_CAN-MALDI_TAG_unnorm_29Aug2024.csv none false true false # log10 was true
-python ../../GridClassFinal.py DART-PP-unnorm-filter_1Mar23.csv                            Boruta false true false
-python ../../GridClassFinal.py Grade_DART-PP_filter_unnorm_7Mar23.csv                      Boruta false true false
-"""
 
 
 def str2bool(v):
@@ -994,6 +1003,19 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
     """print(f"-------> Starting Loop ... with {seed}")
     run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)"""
 
+
+"""
+Grid search
+Adulteration Can                                               feature reduction , transpose , norm , log10
+python ../../GridClassFinal.py Adult_CAN-MALDI_TAG_unnorm_29Aug2024.csv none false true false
+Adulteration Soy
+python ../../GridClassFinal.py Adult_SOY-MALDI_TAG_unnorm_30Aug2024.csv none false true false
+Fresh
+python ../../GridClassFinal.py  Freshness_PP_unnorm_3Sep2024.csv Boruta false true false
+Grade
+python ../../GridClassFinal.py  Grade_PP_unnorm_31Aug2024.csv Boruta false true false
+
+"""
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run regression models with feature reduction.')
