@@ -28,7 +28,8 @@ import argparse
 import random
 import shutil
 import plotly.express as px
-from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_score, f1_score, precision_score
+from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_score, f1_score, precision_score, \
+    accuracy_score
 from sklearn.svm import SVC
 from joblib import Memory
 
@@ -46,6 +47,7 @@ from zipfile import ZipFile
 from os.path import basename
 
 import pickle
+import importlib.metadata
 
 # We must use verson 1.5.0
 print('The scikit-learn version is {}.'.format(sklearn.__version__))
@@ -253,12 +255,16 @@ def get_model(model_name, y):
     }
 
     best_params = {
-        'RandomForest': {'min_samples_leaf': 1, 'min_samples_split': 2, 'n_estimators': 100},
-        # Adult CAN
-        'TensorFlow': {'learn_rate': .001, 'weight_constraint': 0},  # Grade
-        'SVM': {'C': 10, 'kernel': 'linear'},  #'SVM': {'C': 1, 'kernel': 'rbf'},, 'probability':'True' Adult SOY
+        # Adult Can
+        'RandomForest': {'max_depth': None, 'min_samples_leaf': 1, 'min_samples_split': 2, 'n_estimators': 300},
+        # Adult Soy
+        'SVM': {'C': 1, 'kernel': 'rbf'},
+        # Fresh
+        'LogisticRegression': {'C': 1, 'penalty': "l2", 'solver': "lbfgs"},
+        # Grade
+        'TensorFlow': {'learn_rate': .001, 'weight_constraint': 0},
+        # Not used
         'GradientBoosting': {'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 100},  # NONE
-        'LogisticRegression': {'C': 1, 'penalty': "l2", 'solver': "lbfgs"},  # Freshness
     }
 
     if model_name not in ml_algo_model:
@@ -301,7 +307,7 @@ def get_feature_reduction(feature_reduce_choice):
     return reduction_fun
 
 
-def plot_roc(pipeline, ms_info, model_name, n_splits=5, n_repeats=10):
+def plot_roc(ms_info, pipeline, model_name, n_splits=5, n_repeats=10):
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
@@ -312,6 +318,7 @@ def plot_roc(pipeline, ms_info, model_name, n_splits=5, n_repeats=10):
     all_y_true = []
     all_y_scores = []
     for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
+        print(f'Step = {fold_idx}')
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
 
@@ -389,134 +396,99 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
 
     pipeline.fit(X, y)
 
+    # Extract the normalization step
+    normalizer = pipeline.named_steps['normalize']
+
+    # Apply normalization to the data
+    X_nor = normalizer.transform(X)
+
+    # Now extract the StandardScaler from the pipeline
+    scaler = pipeline.named_steps['scaler']
+    # Apply the scaler to the normalized data
+    X_scale = scaler.transform(X_nor)
+
     reduction_step = pipeline.named_steps['Reduction']
     if hasattr(reduction_step, 'support_'):
+        # Apply the reduction step
+        X_reduced = reduction_step.transform(X_scale)
+
+        # Get the support mask to determine selected features
         support_mask = reduction_step.support_
         selected_features = [features[i] for i, flag in enumerate(support_mask) if flag]
     else:
-        selected_features = features  # No reduction step, use all features
+        # No reduction step, use all normalized features
+        X_reduced = X_scale
+        selected_features = features
 
     print(f'{len(y)} & {len(selected_features)} = {selected_features}')
-    X_filtered = X[selected_features]
 
-    # Convert X_filtered to a NumPy array
-    X_filtered_np = X_filtered.values  # This converts the DataFrame to a NumPy array
+    # X_reduced = pd.DataFrame(X_reduced, columns=selected_features)
 
     # Use SHAP explainers based on model type
     # Grade
     if isinstance(model, MyKerasClf):
         print("Using KernelExplainer for ANN")
-        # explainer = shap.GradientExplainer(pipeline.named_steps['classifier'].clf.model, X_filtered)
-        explainer = shap.KernelExplainer(pipeline.named_steps['classifier'].clf.model, X_filtered)
-        shap_values = explainer.shap_values(X_filtered_np)
-
-        # Convert shap_values to the required format
-        shap_values = np.array(shap_values)
-        shap_values = shap.Explanation(
-            values=shap_values,
-            base_values=np.zeros(shap_values.shape[0]),  # Provide base values if applicable
-            data=X_filtered_np,
-            feature_names=selected_features  # Include feature names
-        )
+        explainer = shap.GradientExplainer(pipeline.named_steps['classifier'].clf.model, X_reduced)
+        shap_values = explainer.shap_values(X_reduced)
+        shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
 
     # Freshness
     elif isinstance(pipeline.named_steps['classifier'], LogisticRegression):
         print("\nUsing LinearExplainer for LogisticRegression with probabilities\n")
         # For Logistic Regression model using LinearExplainer
-        # explainer = shap.LinearExplainer(pipeline.named_steps['classifier'], X_filtered, model_output='probability')
-        explainer = shap.KernelExplainer(pipeline.named_steps['classifier'].predict_proba, X_filtered,
-                                         model_output='probability')
-        shap_values = explainer.shap_values(X_filtered_np)
-
-        # Convert shap_values to the required format
-        shap_values = shap.Explanation(
-            values=shap_values,
-            base_values=explainer.expected_value,  # LinearExplainer computes expected values automatically
-            data=X_filtered_np,
-            feature_names=selected_features
-        )
+        explainer = shap.LinearExplainer(pipeline.named_steps['classifier'], X_reduced, model_output='probability')
+        shap_values = explainer.shap_values(X_reduced)
 
     # Adult Soy
     elif isinstance(pipeline.named_steps['classifier'], SVC):
         print("\nUsing KernelExplainer for SVC\n")
         # For SVM model
-        explainer = shap.KernelExplainer(pipeline.named_steps['classifier'].predict_proba, X_filtered)
-        shap_values = explainer.shap_values(X_filtered_np)
-
-        # Convert shap_values to the required format
-        # Select SHAP values for class 1 (positive class)
-        # shap_values = shap_values[1]  # Choose class 1 for binary classification
+        explainer = shap.KernelExplainer(pipeline.named_steps['classifier'].predict_proba, X_reduced)
+        shap_values = explainer.shap_values(X_reduced)
+        shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
         shap_values = np.array(shap_values)
 
-        shap_values = shap.Explanation(
-            values=shap_values,
-            data=X_filtered_np,
-            feature_names=selected_features  # Include feature names
-        )
 
     # Adult Can
     elif isinstance(pipeline.named_steps['classifier'], RandomForestClassifier):
         print("Using TreeExplainer for RF")
-        """
-        setting  model_output='probability'
-        gives error
-        Only model_output="raw" is supported for feature_perturbation="tree_path_dependent" 
-        """
-
         explainer = shap.TreeExplainer(pipeline.named_steps['classifier'])
-        shap_values = explainer.shap_values(X_filtered)
-
-        # Convert shap_values to the required format
-        shap_values = np.array(shap_values)
-        shap_values = shap.Explanation(
-            values=shap_values,
-            base_values=np.zeros(shap_values.shape[0]),  # Provide base values if applicable
-            data=X_filtered_np,
-            feature_names=selected_features  # Include feature names
-        )
-
-        # Works for this case!
-        """explainer = shap.Explainer(pipeline.named_steps['classifier'], X_filtered)
-        shap_values = explainer(X_filtered)"""
+        shap_values = explainer.shap_values(X_reduced)
+        """
+        Even though you’re working with binary classification, the SHAP library’s handling of 
+        RandomForestClassifier can introduce complexity by generating 3D SHAP values.
+        """
+        shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
 
     else:
-        explainer = shap.Explainer(pipeline.named_steps['classifier'], X_filtered)
-        shap_values = explainer(X_filtered)
+        explainer = shap.Explainer(pipeline.named_steps['classifier'], X_reduced)
+        shap_values = explainer(X_reduced)
 
-    # Filter out almost-zero SHAP values
-    # Ensure SHAP values shape matches the feature data shape
-    # assert shap_values.shape[1] == X_filtered.shape[1], "Mismatch between SHAP values and feature data"
-
-    """
-    Even though you’re working with binary classification, the SHAP library’s handling of 
-    RandomForestClassifier can introduce complexity by generating 3D SHAP values.
-    """
-    
-    if len(shap_values.shape) == 3:
-        # Multi-class output (e.g., GBC , RF with TreeExplainer)
-        shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
-    elif len(shap_values.shape) == 2:
-        # Binary output
-        pass  # No adjustment needed
+    # Convert shap_values to the required format
+    shap_values = shap.Explanation(
+        values=shap_values,
+        data=X_reduced,
+        feature_names=selected_features
+    )
 
     # Assuming you want to store SHAP values, feature names, and model predictions
     shap_data = {
         'shap_values': shap_values,
         'features': selected_features,
-        'X_filtered': X_filtered  # Input features used for SHAP
+        'X_filtered': X_reduced  # Input features used for SHAP
     }
     # Save to a pickle file
     with open(f'{output_dir}/shap_data.pkl', 'wb') as f:
         pickle.dump(shap_data, f)
 
     # Generate beeswarm plot for all features
-    shap.summary_plot(shap_values, plot_type="dot", feature_names=selected_features, max_display=5,show=False)
+    shap.summary_plot(shap_values, plot_type="dot", feature_names=selected_features, max_display=10, show=False)
     plt.savefig(f'{output_dir}/shap_beeswarm_plot.png', dpi=300, bbox_inches='tight')
     plt.close()
     print("Beeswarm plot saved as 'shap_beeswarm_plot.png'")
 
     plt.figure()
-    shap.summary_plot(shap_values, plot_type="bar", feature_names=selected_features,max_display=5, show=False)
+    shap.summary_plot(shap_values, plot_type="bar", feature_names=selected_features, max_display=10, show=False)
     plt.savefig(f'{output_dir}/shap_summary_plot_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
     print("Summary plot for all features saved as 'shap_summary_plot_all_folds.png'")
@@ -536,7 +508,7 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
     plt.close()
     print("Summary plot for all features saved as 'shap_combined_plots.png'")
 
-    memory.clear(warn=False)  # we want to reuse it.
+    # memory.clear(warn=False)  # we want to reuse it.
 
     return pipeline
 
@@ -549,13 +521,13 @@ def get_results(model_name, ms_input_file, feature_reduce_choice, transpose_sele
     the_model = get_model(model_name, ms_info['y'])
     # <------------------------------------------
     pipeline = run_model(ms_info, the_model, ms_file_name, feature_reduce_choice, norm, log10)
+    plot_roc(ms_info, pipeline, model_name)
 
     # results = run_model_union(ms_info, the_model, ms_file_name, feature_reduce_choice, norm, log10)
     # <------------------------------------------
-    return pipeline, ms_info
 
 
-seed = 1234546
+seed = 123456
 
 
 def str2bool(v):
@@ -632,10 +604,23 @@ def main(model_name, ms_input_file, feature_reduce_choice, transpose, norm, log1
     feature_reduce_choice = feature_reduce_choice  # None #'Boruta' #'Boruta' #'Boruta'
     # LogisticRegression SVM # 'TensorFlow' #'RandomForest'#'RandomForest' #'GradientBoosting' #'SVM' #'ElasticNet'
 
-    pipeline, ms_info = get_results(model_name, ms_input_file, feature_reduce_choice, transpose_select, norm, log10)
+    get_results(model_name, ms_input_file, feature_reduce_choice, transpose_select, norm, log10)
     # plot_roc(pipeline,ms_info,model_name)
     ms_file_name = Path(ms_input_file).stem
 
+    # Get the list of all installed packages and their versions
+    installed_packages = importlib.metadata.distributions()
+    # Specify the output file name
+    ver_output_file = f'{output_dir}/package_versions.txt'
+
+    # Write the package versions to the file
+    with open(ver_output_file, "w") as f:
+        for package in installed_packages:
+            package_name = package.metadata["Name"]
+            package_version = package.metadata["Version"]
+            f.write(f"{package_name} using {package_version}\n")
+
+    print(f"Package versions have been written to {ver_output_file}")
 
     if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
         os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
