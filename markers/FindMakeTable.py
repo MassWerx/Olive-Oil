@@ -43,10 +43,25 @@ def combine_files_transposed_to_csv(top_level_directory, output_file):
             csv_writer.writerow(row)
 
 
+"""
+# Example usage
+    top_level_directory = '../Classification/oil/Freshness'  # Replace with your top level directory path
+    output_csv = 'fresh_3Sep2024_metrics_scikit.csv'  # Desired output CSV file name
+    
+    top_level_directory = '../Classification/oil/Grade'  # Replace with your top level directory path
+    output_csv = 'grade_31Aug2024_metrics_scikit.csv'  # Desired output CSV file name
+    
+    top_level_directory = '../Classification/oil/Adulteration_can'  # Replace with your top level directory path
+    output_csv = 'adult_can_29Aug2024_metrics_scikit.csv'  # Desired output CSV file name
+    
+    top_level_directory = '../Classification/oil/Adulteration_soy'  # Replace with your top level directory path
+    output_csv = 'adult_soy_30Aug2024_metrics_scikit.csv'  # Desired output CSV file name
+"""
+
 def main():
     # Example usage
-    top_level_directory = '../Regression/27'  # Replace with your top level directory path
-    output_csv = 'markers_reg_metrics_scikit_org.csv'  # Desired output CSV file name
+    top_level_directory = '../Classification/oil/Grade'  # Replace with your top level directory path
+    output_csv = 'grade_31Aug2024_metrics_scikit.csv'  # Desired output CSV file name
     combine_files_transposed_to_csv(top_level_directory, output_csv)
 
 
