@@ -3,11 +3,7 @@ import json
 
 import pandas as pd
 import numpy as np
-import argparse
 import joblib
-import matplotlib.pyplot as plt
-
-import pickle
 import sklearn
 import sys
 import os
@@ -16,32 +12,25 @@ import shap
 
 from scikeras.wrappers import KerasClassifier
 from sklearn.linear_model import LogisticRegression
-from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer, Normalizer
 from boruta import BorutaPy
-from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
-from sklearn.model_selection import RepeatedStratifiedKFold, GridSearchCV, cross_validate
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.model_selection import RepeatedStratifiedKFold
 from sklearn.pipeline import Pipeline
 from pathlib import Path
 from tempfile import mkdtemp
 import argparse
 import random
 import shutil
-import plotly.express as px
-from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_score, f1_score, precision_score, \
-    accuracy_score
+from sklearn.metrics import roc_curve, auc
 from sklearn.svm import SVC
 from joblib import Memory
 
 # Graphics
 import plotly.express as px
-import plotly.figure_factory as ff
-import plotly.graph_objects as go
 
-from matplotlib.pyplot import figure
 import matplotlib.pyplot as plt
 from PIL import Image
-from plotly.subplots import make_subplots
 
 from zipfile import ZipFile
 from os.path import basename
@@ -87,6 +76,9 @@ def load_data_from_file(input_file, flip):
 
 # Load Dataframe from file
 def load_data_frame(input_dataframe):
+
+    current_working_dir = os.getcwd()
+    output_dir = os.path.join(current_working_dir, 'output')
     samples = input_dataframe.iloc[:, 0]
     labels = input_dataframe.iloc[:, 1]
     data_table = input_dataframe.iloc[:, 2:]
@@ -255,13 +247,13 @@ def get_model(model_name, y):
     }
 
     best_params = {
-        # Adult Can
+        # Adult Can n_estimators 200 / Adult Soy n_estimators 100 / Grade n_estimators 300
         'RandomForest': {'max_depth': None, 'min_samples_leaf': 1, 'min_samples_split': 2, 'n_estimators': 300},
-        # Adult Soy
-        'SVM': {'C': 1, 'kernel': 'rbf'},
         # Fresh
+        'SVM': {'C': 10, 'kernel': 'rbf'},
+        # Not used
         'LogisticRegression': {'C': 1, 'penalty': "l2", 'solver': "lbfgs"},
-        # Grade
+        # Not used
         'TensorFlow': {'learn_rate': .001, 'weight_constraint': 0},
         # Not used
         'GradientBoosting': {'learning_rate': 0.01, 'max_depth': 3, 'n_estimators': 100},  # NONE
@@ -366,9 +358,11 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
+    class_names = ms_info['class_names']
 
     # Define a threshold for filtering
     threshold = 1e-5
+
 
     print(f'X shape {X.shape}')
     current_working_dir = os.getcwd()
@@ -378,8 +372,15 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
     cachedir = mkdtemp()
     memory = Memory(location=cachedir, verbose=0)
 
+    with open(f'{output_dir}/{ms_file_name}_class_names.txt', 'w') as f:
+        # Write class names with numerical order
+        f.write("Class Names:\n")
+        for i, class_name in enumerate(class_names):
+            f.write(f"{i}: {class_name}\n")
+
     print(f'Starting {model}')
-    outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
+    # only need to find the best parameters.
+    # outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
 
     log10_pipe = FunctionTransformer(np.log10) if log10_select else 'passthrough'
     norm_pipe = Normalizer(norm='l1') if normalize_select else 'passthrough'
@@ -409,6 +410,7 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
 
     reduction_step = pipeline.named_steps['Reduction']
     if hasattr(reduction_step, 'support_'):
+        print("Got reduction")
         # Apply the reduction step
         X_reduced = reduction_step.transform(X_scale)
 
@@ -420,7 +422,14 @@ def run_model(ms_info, model, ms_file_name, feature_reduce_choice, normalize_sel
         X_reduced = X_scale
         selected_features = features
 
+    print(features)
+    print(selected_features)
+
     print(f'{len(y)} & {len(selected_features)} = {selected_features}')
+    # Save the selected features to a file
+    with open(f'{output_dir}/selected_feature.txt', 'w') as f:
+        for feature in selected_features:
+            f.write(f"{feature}\n")
 
     # X_reduced = pd.DataFrame(X_reduced, columns=selected_features)
 
@@ -521,7 +530,7 @@ def get_results(model_name, ms_input_file, feature_reduce_choice, transpose_sele
     the_model = get_model(model_name, ms_info['y'])
     # <------------------------------------------
     pipeline = run_model(ms_info, the_model, ms_file_name, feature_reduce_choice, norm, log10)
-    plot_roc(ms_info, pipeline, model_name)
+    # plot_roc(ms_info, pipeline, model_name)
 
     # results = run_model_union(ms_info, the_model, ms_file_name, feature_reduce_choice, norm, log10)
     # <------------------------------------------
@@ -562,16 +571,16 @@ def save_input_params(params, output_dir):
 
 
 """
-Keys - Adulteration (CAN) - RF, Adulteration (SOY) - SVM, Freshness - LR, Grade - ANN
+Keys - Adulteration (CAN) - RF, Adulteration (SOY) - RF, Freshness - SVM, Grade - RF
 models - LogisticRegression, SVM, 'TensorFlow', 'RandomFortest'
 Grade
-python ../OilClassSHAP.py Grade_PP_unnorm_31Aug2024.csv TensorFlow Boruta false true false
+python ../OilClassSHAP.py Grade_PP_filt_unnorm_9Sep2024.csv RandomForest Boruta false true false
 Fresh
-python ../OilClassSHAP.py Freshness_PP_unnorm_3Sep2024.csv LogisticRegression Boruta false true false
+python ../OilClassSHAP.py Freshness_PP_unnorm_3Sep2024.csv SVM Boruta false true false
 Adult Soy
-python ../OilClassSHAP.py Adult_SOY-MALDI_TAG_unnorm_30Aug2024.csv SVM none false true false
+python ../OilClassSHAP.py Adult_SOY-MALDI_TAG_unnorm_30Aug2024.csv RandomForest Boruta false true false
 Adult Can
-python ../OilClassSHAP.py Adult_CAN-MALDI_TAG_unnorm_29Aug2024.csv RandomForest none false true false
+python ../OilClassSHAP.py Adult_CAN-MALDI_TAG_unnorm_29Aug2024.csv RandomForest Boruta false true false
 """
 
 
