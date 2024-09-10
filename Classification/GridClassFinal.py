@@ -2,17 +2,12 @@ import json
 
 import pandas as pd
 import numpy as np
-
-import argparse
 import joblib
-import matplotlib.pyplot as plt
-
-import pickle
 import sklearn
 import sys
-import os
 import tensorflow as tf
 import shap
+import pickle
 
 from scikeras.wrappers import KerasClassifier
 from sklearn.linear_model import LogisticRegression
@@ -33,12 +28,15 @@ import argparse
 import random
 import shutil
 import plotly.express as px
+
+import matplotlib.pyplot as plt
+from PIL import Image
+
 from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_score, f1_score, precision_score, \
     accuracy_score
 from sklearn.svm import SVC
 
 from joblib import Memory
-from xgboost import XGBRegressor
 
 import warnings
 
@@ -68,17 +66,20 @@ def create_zip_file_output(output_file_name, base_dir):
 
 def get_feature_reduction(feature_reduce_choice):
     reduction_fun = None
-    if feature_reduce_choice == 'Boruta':
-        rf_reducer = RandomForestClassifier(n_jobs=-1, class_weight='balanced', max_depth=5)
-        np.int = np.int32
-        np.float = np.float64
-        np.bool = np.bool_
-        boruta = BorutaPy(rf_reducer, n_estimators='auto', verbose=0, random_state=seed)
-        reduction_fun = boruta
-        print('Using Boruta')
-    """else:
-        print("Please select a valid Feature Reduction Method or None")
-        quit()"""
+    match feature_reduce_choice:
+        case None:
+            print("No Feature Reduction")
+        case 'Boruta':
+            np.int = np.int32
+            np.float = np.float64
+            np.bool = np.bool_
+            rf_reducer = RandomForestClassifier(n_jobs=-1, max_depth=5)
+            print('Using Boruta')
+            boruta = BorutaPy(rf_reducer, n_estimators='auto', verbose=0, random_state=seed)
+            reduction_fun = boruta
+        case _:
+            print("Please select a valid Feature Reduction Method")
+            quit()
     return reduction_fun
 
 
@@ -100,8 +101,8 @@ def load_data_frame(input_dataframe):
     samples = input_dataframe.iloc[:, 0]
     labels = input_dataframe.iloc[:, 1]
     data_table = input_dataframe.iloc[:, 2:]
-    features = input_dataframe.iloc[:, 2:].columns
-    features_names = features.to_numpy().astype(str)
+    features = input_dataframe.iloc[:, 2:].columns.values.tolist()
+    features_names = features  #.to_numpy().astype(str)
 
     label_table = pd.get_dummies(labels)
     class_names = label_table.columns.to_numpy()
@@ -280,7 +281,7 @@ def get_models(y):
             'classifier__max_depth': [3, 5, 7]
         }),
         ('RandomForest', RandomForestClassifier(n_jobs=-1, random_state=seed), {
-            'classifier__n_estimators': [100, 200, 300],
+            'classifier__n_estimators': [100, 200, 300, 500],
             'classifier__max_depth': [None, 10, 20, 30],
             'classifier__min_samples_split': [2, 5, 10],
             'classifier__min_samples_leaf': [1, 2, 4]
@@ -292,10 +293,9 @@ def get_models(y):
     ]
 
     list_of_models_short = [
-        ('AdaBoost', AdaBoostClassifier(random_state=seed), {
-            'classifier__n_estimators': [50],
-            'classifier__learning_rate': [0.01]
-        })
+        ('KNeighbors', KNeighborsClassifier(), {
+            'classifier__n_neighbors': [3],
+        }),
     ]
     return list_of_models
 
@@ -398,7 +398,6 @@ def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, 
     shutil.rmtree(cachedir)
 
 
-
 def plot_roc(ms_info, pipeline, model_name, output_dir, n_splits=5, n_repeats=10):
     X = ms_info['X']
     y = ms_info['y']
@@ -454,25 +453,105 @@ def plot_roc(ms_info, pipeline, model_name, output_dir, n_splits=5, n_repeats=10
     return roc_auc
 
 
+def plot_SHAP(model, pipeline, X_reduced, selected_features, output_dir, name):
+    # Use SHAP explainers based on model type
+    # Grade
+    if isinstance(model, MyKerasClf):
+        print("Using KernelExplainer for ANN")
+        explainer = shap.GradientExplainer(pipeline.named_steps['classifier'].clf.model, X_reduced)
+        shap_values = explainer.shap_values(X_reduced)
+        shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
+
+    # Freshness
+    elif isinstance(pipeline.named_steps['classifier'], LogisticRegression):
+        print("\nUsing LinearExplainer for LogisticRegression with probabilities\n")
+        # For Logistic Regression model using LinearExplainer
+        explainer = shap.LinearExplainer(pipeline.named_steps['classifier'], X_reduced, model_output='probability')
+        shap_values = explainer.shap_values(X_reduced)
+
+    # Adult Soy
+    elif isinstance(pipeline.named_steps['classifier'], (SVC, KNeighborsClassifier, AdaBoostClassifier)):
+        print("\nUsing KernelExplainer for most\n")
+        # For SVM model
+        explainer = shap.KernelExplainer(pipeline.named_steps['classifier'].predict_proba, X_reduced)
+        shap_values = explainer.shap_values(X_reduced)
+        shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
+        shap_values = np.array(shap_values)
+
+    # Adult Can
+    elif isinstance(pipeline.named_steps['classifier'], (RandomForestClassifier, GradientBoostingClassifier)):
+        print("Using TreeExplainer for RF, GB, or AdaBoost")
+        explainer = shap.TreeExplainer(pipeline.named_steps['classifier'])
+        shap_values = explainer.shap_values(X_reduced)
+        """
+        Even though you’re working with binary classification, the SHAP library’s handling of 
+        RandomForestClassifier can introduce complexity by generating 3D SHAP values.
+        """
+        if isinstance(pipeline.named_steps['classifier'], RandomForestClassifier):
+            shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
+
+    else:
+        explainer = shap.Explainer(pipeline.named_steps['classifier'], X_reduced)
+        shap_values = explainer(X_reduced)
+
+    # Convert shap_values to the required format
+    shap_values = shap.Explanation(
+        values=shap_values,
+        data=X_reduced,
+        feature_names=selected_features
+    )
+
+    # Assuming you want to store SHAP values, feature names, and model predictions
+    shap_data = {
+        'shap_values': shap_values,
+        'features': selected_features,
+        'X_filtered': X_reduced  # Input features used for SHAP
+    }
+    # Save to a pickle file
+    with open(f'{output_dir}/shap_data_{name}.pkl', 'wb') as f:
+        pickle.dump(shap_data, f)
+
+    # Generate beeswarm plot for all features
+    shap.summary_plot(shap_values, plot_type="dot", feature_names=selected_features, max_display=10, show=False)
+    plt.savefig(f'{output_dir}/shap_beeswarm_{name}_plot.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    print("Beeswarm plot saved as 'shap_beeswarm_plot.png'")
+
+    plt.figure()
+    shap.summary_plot(shap_values, plot_type="bar", feature_names=selected_features, max_display=10, show=False)
+    plt.savefig(f'{output_dir}/shap_summary_plot_{name}_all_folds.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    print("Summary plot for all features saved as 'shap_summary_plot_all_folds.png'")
+
+    bar_plot = Image.open(f'{output_dir}/shap_beeswarm_{name}_plot.png')
+    summary_plot = Image.open(f'{output_dir}/shap_summary_plot_{name}_all_folds.png')
+
+    fig, axes = plt.subplots(1, 2, figsize=(16, 8))
+    axes[0].imshow(bar_plot)
+    axes[0].axis('off')
+    axes[1].imshow(summary_plot)
+    axes[1].axis('off')
+
+    fig.suptitle('SHAP Bar Plot and Summary Plot', fontsize=16)
+    plt.tight_layout()
+    plt.savefig(f'{output_dir}/shap_combined_{name}_plots.png', dpi=300)
+    plt.close()
+    print("Summary plot for all features saved as 'shap_combined_plots.png'")
+
+
 def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select,
-                  n_splits=5, n_repeats=10, round_scores=True):
+                         n_splits=5, n_repeats=10, round_scores=True):
     X = ms_info['X']
     y = ms_info['y']
+    features = ms_info['feature_names']
     current_working_dir = os.getcwd()
     cachedir = mkdtemp()
     memory = Memory(location=cachedir, verbose=0)
 
     overall_results = []
 
-    if log10_select:
-        log10_pipe = FunctionTransformer(safe_log10)
-    else:
-        log10_pipe = None
-
-    if normalize_select:
-        norm_pipe = Normalizer(norm='l1')
-    else:
-        norm_pipe = None
+    log10_pipe = FunctionTransformer(np.log10) if log10_select else 'passthrough'
+    norm_pipe = Normalizer(norm='l1') if normalize_select else 'passthrough'
 
     for name, model, param_grid in list_of_models:
         print(f'Starting {name}')
@@ -491,6 +570,9 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
         grid_search.fit(X, y)
         best_params = grid_search.best_params_
 
+        # Use the best parameters for the model
+        pipeline.set_params(**best_params)
+
         # Save the best parameters
         dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
         if not os.path.exists(dirpath):
@@ -498,8 +580,18 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
         with open(f'{dirpath}/best_params_{name}.json', 'w') as f:
             json.dump(best_params, f, indent=4)
 
-        # Use the best parameters for the model
-        pipeline.set_params(**best_params)
+        # Extract the best parameters specific to the model
+        model_best_params = {k.replace('classifier__', ''): v for k, v in best_params.items() if
+                             k.startswith('classifier__')}
+
+        # Set the best parameters on the model and save all model parameters
+        model.set_params(**model_best_params)
+        model_hyperparameters = model.get_params()
+
+        # Save all model parameters to a file
+        with open(f'{dirpath}/all_params_{name}.txt', 'w') as f:
+            for key, value in model_hyperparameters.items():
+                f.write(f"{key}: {value}\n")
 
         outer_cv = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=seed)
         all_scores = {'accuracy': [], 'balanced_accuracy': [], 'recall': [], 'f1': [], 'precision': []}
@@ -552,6 +644,39 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
 
         roc_auc = plot_roc(ms_info, pipeline, name, dirpath)
 
+        # Extract the normalization step
+        normalizer = pipeline.named_steps['normalize']
+
+        # Apply normalization to the data
+        X_nor = normalizer.transform(X)
+
+        # Now extract the StandardScaler from the pipeline
+        scaler = pipeline.named_steps['scaler']
+        # Apply the scaler to the normalized data
+        X_scale = scaler.transform(X_nor)
+
+        reduction_step = pipeline.named_steps['Reduction']
+        if hasattr(reduction_step, 'support_'):
+            print("Got reduction")
+            # Apply the reduction step
+            X_reduced = reduction_step.transform(X_scale)
+
+            # Get the support mask to determine selected features
+            support_mask = reduction_step.support_
+            selected_features = [features[i] for i, flag in enumerate(support_mask) if flag]
+        else:
+            # No reduction step, use all normalized features
+            X_reduced = X_scale
+            selected_features = features
+
+        print(f'{len(y)} & {len(selected_features)} = {selected_features}')
+        # Save the selected features to a file
+        with open(f'{dirpath}/selected_feature_{name}.txt', 'w') as f:
+            for feature in selected_features:
+                f.write(f"{feature}\n")
+
+        plot_SHAP(model, pipeline, X_reduced, selected_features, dirpath, name)
+
         with open(f'{dirpath}/metrics_cv_{name}.txt', 'w') as f:
             f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
             f.write(f'Bal.Acc.sd: {std_balanced_accuracy}\n')
@@ -564,7 +689,6 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
             f.write(f'Accuracy.avg: {mean_score}\n')
             f.write(f'Accuracy.sd: {std_score}\n')
             f.write(f'AUC: {roc_auc}\n')
-
 
         if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
             os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
@@ -848,7 +972,6 @@ def run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)
                                       recall_score(y_test, y_pred), f1_score(y_test, y_pred),
                                       precision_score(y_test, y_pred)])
 
-
             all_repeat_mean_accuracies.append(np.mean(repeat_accuracy))
             all_repeat_std_accuracies.append(np.std(repeat_accuracy))
             all_repeat_mean_balanced_accuracies.append(np.mean(repeat_balanced_accuracies))
@@ -936,16 +1059,27 @@ def resetDirs(list_of_models):
 seed = 123456
 
 
-
 def str2bool(v):
+    if v is None:
+        return None
     if isinstance(v, bool):
         return v
-    if v.lower() in ('yes', 'true', 't', 'y', '1'):
-        return True
-    elif v.lower() in ('no', 'false', 'f', 'n', '0'):
-        return False
-    else:
-        raise argparse.ArgumentTypeError('Boolean value expected.')
+    if isinstance(v, str):
+        if v.lower() in ('yes', 'true', 't', 'y', '1'):
+            return True
+        elif v.lower() in ('no', 'false', 'f', 'n', '0'):
+            return False
+        elif v.lower() == 'none':  # Handle 'none' explicitly
+            return None
+        else:
+            raise argparse.ArgumentTypeError('Boolean value expected or None.')
+    raise argparse.ArgumentTypeError('Boolean value expected.')
+
+
+def str_or_none(v):
+    if v.lower() == 'none':
+        return None
+    return v
 
 
 def save_input_params(params, output_dir):
@@ -955,8 +1089,8 @@ def save_input_params(params, output_dir):
         json.dump(params, f, indent=4)
     print(f"Input parameters saved to '{params_file}'.")
 
-def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
 
+def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
     #try:
     print("Starting ... ")
     if feature_reduce_choice is None:
@@ -979,8 +1113,6 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
         "log10": log10,
     }
     save_input_params(input_params, output_dir)
-
-
 
     ms_file_name = Path(ms_input_file).stem
     df_file = load_data_from_file(ms_input_file, transpose)
@@ -1007,24 +1139,109 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
 """
 Grid search
 Adulteration Can                                               feature reduction , transpose , norm , log10
-python ../../GridClassFinal.py Adult_CAN-MALDI_TAG_unnorm_29Aug2024.csv none false true false
+python ../../GridClassFinal.py Adult_CAN-MALDI_TAG_unnorm_8Sep2024.csv Boruta false true false
 Adulteration Soy
-python ../../GridClassFinal.py Adult_SOY-MALDI_TAG_unnorm_30Aug2024.csv none false true false
+python ../../GridClassFinal.py Adult_SOY-MALDI_TAG_unnorm_8Sep2024.csv Boruta false true false
 Fresh
-python ../../GridClassFinal.py  Freshness_PP_unnorm_3Sep2024.csv Boruta false true false
+python ../../GridClassFinal.py  Freshness_PP_filt_unnorm_9Sep2024.csv Boruta false true false
 Grade
-python ../../GridClassFinal.py  Grade_PP_unnorm_31Aug2024.csv Boruta false true false
+python ../../GridClassFinal.py  Grade_PP_filt_unnorm_9Sep2024.csv Boruta false true false
 
 """
 
-if __name__ == "__main__":
+"""if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run regression models with feature reduction.')
     parser.add_argument('ms_input_file', type=str, help='Path to the input CSV file.')
-    parser.add_argument('feature_reduce_choice', type=str, help='Choice of feature reduction method.')
+    parser.add_argument('feature_reduce_choice', type=str_or_none, nargs='?', default=None,
+                        help='Choice of feature reduction method. Defaults to None.')
     parser.add_argument('transpose', type=str2bool, help='Transpose file (true/false)')
     parser.add_argument('norm', type=str2bool, help='Normalize (true/false)')
     parser.add_argument('log10', type=str2bool, help='Take the log 10 of input in the pipeline (true/false)')
     # parser.add_argument('set_seed', type=str, help='The Seed to use')
     args = parser.parse_args()
 
-    main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  #, args.set_seed)
+    main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  #, args.set_seed)"""
+
+import csv
+import importlib.metadata
+
+# Define the citation dictionary
+citation_dict = {
+    "json": "Built-in Python module, does not require a citation.",
+    "pandas": "Reback, J., et al. (2023). pandas: powerful Python data analysis toolkit. URL: https://pandas.pydata.org/",
+    "numpy": "Harris, C. R., et al. (2020). Array programming with NumPy. Nature, 585(7825), 357-362.",
+    "joblib": "Joblib: running Python functions as pipeline jobs. Joblib documentation. URL: https://joblib.readthedocs.io/en/latest/",
+    "scikit-learn": "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12, 2825-2830.",
+    "tensorflow": "TensorFlow Development Team. (2015). TensorFlow: Large-scale machine learning on heterogeneous systems. URL: https://tensorflow.org",
+    "shap": "Lundberg, S. M., & Lee, S.-I. (2017). A Unified Approach to Interpreting Model Predictions. Advances in Neural Information Processing Systems, 30.",
+    "pickle": "Built-in Python module, does not require a citation.",
+    "scikeras": "SciKeras Development Team. (2021). SciKeras: A Scikit-learn API wrapper for Keras. URL: https://scikeras.readthedocs.io/",
+    "boruta": "Kursa, M. B., Rudnicki, W. R. (2010). Feature Selection with the Boruta Package. Journal of Statistical Software, 36(11), 1-13.",
+    "plotly": "Plotly Technologies Inc. (2015). Collaborative data science. Montreal, QC: Plotly Technologies Inc. URL: https://plotly.com",
+    "matplotlib": "Hunter, J. D. (2007). Matplotlib: A 2D Graphics Environment. Computing in Science & Engineering, 9(3), 90-95.",
+    "PIL": "Pillow: Python Imaging Library. URL: https://python-pillow.org/",
+    "Memory": "Joblib: running Python functions as pipeline jobs. Joblib documentation. URL: https://joblib.readthedocs.io/en/latest/",
+    "SVC": "Cortes, C., & Vapnik, V. (1995). Support-vector networks. Machine Learning, 20(3), 273-297.",
+    "roc_curve": "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12, 2825-2830.",
+    "auc": "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12, 2825-2830.",
+    "balanced_accuracy_score": "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12, 2825-2830.",
+    "recall_score": "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12, 2825-2830.",
+    "f1_score": "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12, 2825-2830.",
+    "precision_score": "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12, 2825-2830.",
+    "accuracy_score": "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12, 2825-2830.",
+    "warnings": "Built-in Python module, does not require a citation.",
+    "argparse": "Built-in Python module, does not require a citation.",
+    "os": "Built-in Python module, does not require a citation.",
+    "pathlib": "Built-in Python module, does not require a citation.",
+    "random": "Built-in Python module, does not require a citation.",
+    "shutil": "Built-in Python module, does not require a citation.",
+    "zipfile": "Built-in Python module, does not require a citation."
+}
+
+# Define the libraries to be processed
+libraries = [
+    "json", "pandas", "numpy", "joblib", "scikit-learn", "tensorflow", "shap", "pickle",
+    "scikeras", "boruta", "plotly", "matplotlib", "PIL", "Memory", "SVC", "roc_curve",
+    "auc", "balanced_accuracy_score", "recall_score", "f1_score", "precision_score",
+    "accuracy_score", "warnings", "argparse", "os", "pathlib", "random", "shutil", "zipfile"
+]
+
+
+# Function to get the version of a library
+# Function to get the version of a library, with handling for specific functions from scikit-learn
+def get_package_version(library):
+    try:
+        if library in ["roc_curve", "auc", "balanced_accuracy_score", "recall_score", "f1_score", "precision_score", "accuracy_score"]:
+            return importlib.metadata.version("scikit-learn")  # All are part of scikit-learn
+        return importlib.metadata.version(library)
+    except importlib.metadata.PackageNotFoundError:
+        return "Version not found"
+
+
+# Function to save the citation information to a CSV file
+def save_citations_to_csv(filename):
+    # Create and write to CSV file
+    with open(filename, mode='w', newline='') as file:
+        writer = csv.writer(file)
+        # Write header
+        writer.writerow(["Software Package", "Version", "Citation"])
+
+        # Write package data with versions and citations
+        for library in libraries:
+            version = get_package_version(library)
+            citation = citation_dict.get(library, "Citation not found")
+            writer.writerow([library, version, citation])
+
+    print(f"Citations saved to {filename}")
+
+
+# Define the main function
+def main():
+    # Output CSV filename
+    filename = "software_citations.csv"
+    save_citations_to_csv(filename)
+
+
+# Standard Python entry point
+if __name__ == "__main__":
+    main()
