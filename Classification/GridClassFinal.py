@@ -1164,6 +1164,7 @@ python ../../GridClassFinal.py  Grade_PP_filt_unnorm_9Sep2024.csv Boruta false t
 
 import csv
 import importlib.metadata
+import sys
 
 # Define the citation dictionary
 citation_dict = {
@@ -1179,7 +1180,7 @@ citation_dict = {
     "boruta": "Kursa, M. B., Rudnicki, W. R. (2010). Feature Selection with the Boruta Package. Journal of Statistical Software, 36(11), 1-13.",
     "plotly": "Plotly Technologies Inc. (2015). Collaborative data science. Montreal, QC: Plotly Technologies Inc. URL: https://plotly.com",
     "matplotlib": "Hunter, J. D. (2007). Matplotlib: A 2D Graphics Environment. Computing in Science & Engineering, 9(3), 90-95.",
-    "PIL": "Pillow: Python Imaging Library. URL: https://python-pillow.org/",
+    "PIL": "Clark, A. (2015). Pillow (PIL Fork) Documentation. readthedocs. URL: https://buildmedia.readthedocs.org/media/pdf/pillow/latest/pillow.pdf",
     "Memory": "Joblib: running Python functions as pipeline jobs. Joblib documentation. URL: https://joblib.readthedocs.io/en/latest/",
     "SVC": "Cortes, C., & Vapnik, V. (1995). Support-vector networks. Machine Learning, 20(3), 273-297.",
     "roc_curve": "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12, 2825-2830.",
@@ -1207,15 +1208,25 @@ libraries = [
 ]
 
 
-# Function to get the version of a library
 # Function to get the version of a library, with handling for specific functions from scikit-learn
 def get_package_version(library):
     try:
-        if library in ["roc_curve", "auc", "balanced_accuracy_score", "recall_score", "f1_score", "precision_score", "accuracy_score"]:
+        if library in ["roc_curve", "auc", "balanced_accuracy_score", "recall_score", "f1_score", "precision_score", "accuracy_score", "SVC"]:
             return importlib.metadata.version("scikit-learn")  # All are part of scikit-learn
-        return importlib.metadata.version(library)
+        elif library == "Memory":
+            return "Joblib " + importlib.metadata.version("joblib")  # Memory is part of joblib
+        elif library == "PIL":
+            return "Pillow " + importlib.metadata.version("Pillow")  # PIL is known as Pillow
+        else:
+            return importlib.metadata.version(library)
     except importlib.metadata.PackageNotFoundError:
         return "Version not found"
+
+
+# Function to get the Python version
+def get_python_version():
+    return f"Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+
 
 
 # Function to save the citation information to a CSV file
@@ -1224,13 +1235,13 @@ def save_citations_to_csv(filename):
     with open(filename, mode='w', newline='') as file:
         writer = csv.writer(file)
         # Write header
-        writer.writerow(["Software Package", "Version", "Citation"])
+        writer.writerow(["Software", "Package", "Package Version", "Citation"])
 
-        # Write package data with versions and citations
+        # Write rows for each package
         for library in libraries:
             version = get_package_version(library)
             citation = citation_dict.get(library, "Citation not found")
-            writer.writerow([library, version, citation])
+            writer.writerow([get_python_version(), library, version, citation])
 
     print(f"Citations saved to {filename}")
 
