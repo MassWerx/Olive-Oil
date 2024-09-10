@@ -293,8 +293,10 @@ def get_models(y):
     ]
 
     list_of_models_short = [
-        ('KNeighbors', KNeighborsClassifier(), {
-            'classifier__n_neighbors': [3],
+        ('LogisticRegression', LogisticRegression(max_iter=1000, random_state=seed), {
+            'classifier__C': [0.1, 1, 10],
+            'classifier__penalty': ['l2'],
+            'classifier__solver': ['lbfgs']
         }),
     ]
     return list_of_models
@@ -453,7 +455,42 @@ def plot_roc(ms_info, pipeline, model_name, output_dir, n_splits=5, n_repeats=10
     return roc_auc
 
 
-def plot_SHAP(model, pipeline, X_reduced, selected_features, output_dir, name):
+def plot_SHAP(X, y, features, model, pipeline, output_dir, name):
+    # refit to get the SHAP values
+    # Extract the normalization step
+    pipeline.fit(X, y)
+    normalizer = pipeline.named_steps['normalize']
+
+    # Apply normalization to the data
+    X_nor = normalizer.transform(X)
+
+    # Now extract the StandardScaler from the pipeline
+    scaler = pipeline.named_steps['scaler']
+    # Apply the scaler to the normalized data
+    X_scale = scaler.transform(X_nor)
+
+    reduction_step = pipeline.named_steps['Reduction']
+    if hasattr(reduction_step, 'support_'):
+        print("Got reduction")
+        # Apply the reduction step
+        X_reduced = reduction_step.transform(X_scale)
+
+        # Get the support mask to determine selected features
+        support_mask = reduction_step.support_
+        selected_features = [features[i] for i, flag in enumerate(support_mask) if flag]
+    else:
+        # No reduction step, use all normalized features
+        X_reduced = X_scale
+        selected_features = features
+
+    print(f'{len(y)} & {len(selected_features)} = {selected_features}')
+    # Save the selected features to a file
+    with open(f'{output_dir}/selected_feature_{name}.txt', 'w') as f:
+        for feature in selected_features:
+            f.write(f"{feature}\n")
+
+
+
     # Use SHAP explainers based on model type
     # Grade
     if isinstance(model, MyKerasClf):
@@ -642,40 +679,10 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
             scores_df = scores_df.round(3)
         scores_df.to_csv(f'{dirpath}/cv_{name}.csv', index=False)
 
+        plot_SHAP(X, y, features, model, pipeline, dirpath, name)
+
         roc_auc = plot_roc(ms_info, pipeline, name, dirpath)
 
-        # Extract the normalization step
-        normalizer = pipeline.named_steps['normalize']
-
-        # Apply normalization to the data
-        X_nor = normalizer.transform(X)
-
-        # Now extract the StandardScaler from the pipeline
-        scaler = pipeline.named_steps['scaler']
-        # Apply the scaler to the normalized data
-        X_scale = scaler.transform(X_nor)
-
-        reduction_step = pipeline.named_steps['Reduction']
-        if hasattr(reduction_step, 'support_'):
-            print("Got reduction")
-            # Apply the reduction step
-            X_reduced = reduction_step.transform(X_scale)
-
-            # Get the support mask to determine selected features
-            support_mask = reduction_step.support_
-            selected_features = [features[i] for i, flag in enumerate(support_mask) if flag]
-        else:
-            # No reduction step, use all normalized features
-            X_reduced = X_scale
-            selected_features = features
-
-        print(f'{len(y)} & {len(selected_features)} = {selected_features}')
-        # Save the selected features to a file
-        with open(f'{dirpath}/selected_feature_{name}.txt', 'w') as f:
-            for feature in selected_features:
-                f.write(f"{feature}\n")
-
-        plot_SHAP(model, pipeline, X_reduced, selected_features, dirpath, name)
 
         with open(f'{dirpath}/metrics_cv_{name}.txt', 'w') as f:
             f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
@@ -1149,7 +1156,7 @@ python ../../GridClassFinal.py  Grade_PP_filt_unnorm_9Sep2024.csv Boruta false t
 
 """
 
-"""if __name__ == "__main__":
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Run regression models with feature reduction.')
     parser.add_argument('ms_input_file', type=str, help='Path to the input CSV file.')
     parser.add_argument('feature_reduce_choice', type=str_or_none, nargs='?', default=None,
@@ -1160,7 +1167,7 @@ python ../../GridClassFinal.py  Grade_PP_filt_unnorm_9Sep2024.csv Boruta false t
     # parser.add_argument('set_seed', type=str, help='The Seed to use')
     args = parser.parse_args()
 
-    main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  #, args.set_seed)"""
+    main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  #, args.set_seed)
 
 import csv
 import importlib.metadata
@@ -1173,7 +1180,7 @@ citation_dict = {
     "numpy": "Harris, C. R., et al. (2020). Array programming with NumPy. Nature, 585(7825), 357-362.",
     "joblib": "Joblib: running Python functions as pipeline jobs. Joblib documentation. URL: https://joblib.readthedocs.io/en/latest/",
     "scikit-learn": "Pedregosa, F., et al. (2011). Scikit-learn: Machine Learning in Python. Journal of Machine Learning Research, 12, 2825-2830.",
-    "tensorflow": "TensorFlow Development Team. (2015). TensorFlow: Large-scale machine learning on heterogeneous systems. URL: https://tensorflow.org",
+    "tensorflow": "TensorFlow Development Team. (2016). TensorFlow: Large-scale machine learning on heterogeneous systems. URL: https://tensorflow.org",
     "shap": "Lundberg, S. M., & Lee, S.-I. (2017). A Unified Approach to Interpreting Model Predictions. Advances in Neural Information Processing Systems, 30.",
     "pickle": "Built-in Python module, does not require a citation.",
     "scikeras": "SciKeras Development Team. (2021). SciKeras: A Scikit-learn API wrapper for Keras. URL: https://scikeras.readthedocs.io/",
@@ -1246,7 +1253,7 @@ def save_citations_to_csv(filename):
     print(f"Citations saved to {filename}")
 
 
-# Define the main function
+""""# Define the main function
 def main():
     # Output CSV filename
     filename = "software_citations.csv"
@@ -1255,4 +1262,4 @@ def main():
 
 # Standard Python entry point
 if __name__ == "__main__":
-    main()
+    main()"""
