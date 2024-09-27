@@ -16,7 +16,7 @@ def combine_files_transposed_to_csv(top_level_directory, output_file):
     # Traverse directories starting from the top level directory
     for root, dirs, files in os.walk(top_level_directory):
         for file in files:
-            if file.startswith("metrics_") and file.endswith(".txt"):
+            if file.startswith("metrics_cv_") and file.endswith(".txt"):
                 file_path = os.path.join(root, file)
                 filenames.append(file_path)
                 with open(file_path, 'r') as f:
@@ -55,9 +55,11 @@ def run_command_and_harvest(command, top_level_directory, output_csv):
     print(f"Running command: {command}")
     subprocess.run(command)
 
+
+    base_dir = ".."
     # After command finishes, combine metrics files
-    print(f"Harvesting metrics from {top_level_directory} into {output_csv}")
-    combine_files_transposed_to_csv(top_level_directory, output_csv)
+    print(f"Harvesting metrics from {base_dir} into {output_csv}")
+    combine_files_transposed_to_csv(base_dir, output_csv)
 
 if __name__ == "__main__":
     # List of jobs and their corresponding directories and outputs
