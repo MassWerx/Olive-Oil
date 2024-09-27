@@ -36,7 +36,14 @@ from sklearn.metrics import roc_curve, auc, balanced_accuracy_score, recall_scor
     accuracy_score
 from sklearn.svm import SVC
 
+import csv
+from collections import defaultdict
+import importlib.metadata
+
 from joblib import Memory
+
+import multiprocessing
+import subprocess
 
 import warnings
 
@@ -81,11 +88,6 @@ def get_feature_reduction(feature_reduce_choice):
             print("Please select a valid Feature Reduction Method")
             quit()
     return reduction_fun
-
-
-def save_features_for_fold(features, fold_idx, output_dir):
-    features_df = pd.DataFrame(features)
-    features_df.to_csv(os.path.join(output_dir, f'features_fold_{fold_idx}.csv'), index=False)
 
 
 def load_data_from_file(input_file, flip):
@@ -292,7 +294,7 @@ def get_models(y):
         })
     ]
 
-    list_of_models_short = [
+    test_list_of_models_short = [
         ('LogisticRegression', LogisticRegression(max_iter=1000, random_state=seed), {
             'classifier__C': [0.1, 1, 10],
             'classifier__penalty': ['l2'],
@@ -300,105 +302,6 @@ def get_models(y):
         }),
     ]
     return list_of_models
-
-
-def safe_log10(num):
-    return np.log10(np.clip(num, a_min=1e-9, a_max=None))  # Clip values to avoid log10(0)
-
-
-def run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
-    X = ms_info['X']
-    y = ms_info['y']
-    current_working_dir = os.getcwd()
-    cachedir = mkdtemp()
-    memory = Memory(location=cachedir, verbose=0)
-
-    overall_results = []
-
-    if log10_select:
-        log10_pipe = FunctionTransformer(safe_log10)
-    else:
-        log10_pipe = None
-
-    if normalize_select:
-        norm_pipe = Normalizer(norm='l1')
-    else:
-        norm_pipe = None
-
-    for name, model, param_grid in list_of_models:
-        print(f'Starting {name}')
-
-        pipeline = Pipeline([
-            ('normalize', norm_pipe),
-            ('transform', log10_pipe),  # FunctionTransformer(np.log10)), # log10_select
-            ('scaler', StandardScaler()),
-            ('Reduction', get_feature_reduction(feature_reduce_choice)),
-            ('classifier', model)
-        ], memory=memory)
-
-        # Perform grid search using the entire data
-        grid_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='neg_log_loss')
-        grid_search.fit(X, y)
-        best_params = grid_search.best_params_
-
-        # Save the best parameters
-        dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
-        if not os.path.exists(dirpath):
-            os.makedirs(dirpath)
-        with open(f'{dirpath}/best_params_{name}.json', 'w') as f:
-            json.dump(best_params, f, indent=4)
-
-        # Use the best parameters for the model
-        pipeline.set_params(**best_params)
-
-        outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
-        all_scores = {'accuracy': [], 'balanced_accuracy': [], 'recall': [], 'f1': [], 'precision': []}
-
-        scores = cross_validate(pipeline, X, y, cv=outer_cv,
-                                scoring=['accuracy', 'balanced_accuracy', 'recall', 'f1', 'precision'])
-
-        all_scores['accuracy'].extend(scores['test_accuracy'])
-        all_scores['balanced_accuracy'].extend(scores['test_balanced_accuracy'])
-        all_scores['recall'].extend(scores['test_recall'])
-        all_scores['f1'].extend(scores['test_f1'])
-        all_scores['precision'].extend(scores['test_precision'])
-
-        # Calculate mean and standard deviation for metrics
-        mean_balanced_accuracy = np.mean(all_scores['balanced_accuracy'])
-        std_balanced_accuracy = np.std(all_scores['balanced_accuracy'])
-        mean_recall = np.mean(all_scores['recall'])
-        std_recall = np.std(all_scores['recall'])
-        mean_f1 = np.mean(all_scores['f1'])
-        std_f1 = np.std(all_scores['f1'])
-        mean_precision = np.mean(all_scores['precision'])
-        std_precision = np.std(all_scores['precision'])
-        mean_score = np.mean(all_scores['accuracy'])
-        std_score = np.std(all_scores['accuracy'])
-
-        # Save cross-validation scores for debugging
-        scores_df = pd.DataFrame(all_scores)
-        scores_df.to_csv(f'{dirpath}/cv_{name}.csv', index=False)
-
-        with open(f'{dirpath}/metrics_cv_{name}.txt', 'w') as f:
-            f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
-            f.write(f'Bal.Acc.sd: {std_balanced_accuracy}\n')
-            f.write(f'Recall.avg: {mean_recall}\n')
-            f.write(f'Recall.sd: {std_recall}\n')
-            f.write(f'Precision.avg: {mean_precision}\n')
-            f.write(f'Precision.sd: {std_precision}\n')
-            f.write(f'F1.avg: {mean_f1}\n')
-            f.write(f'F1.sd: {std_f1}\n')
-            f.write(f'Accuracy.avg: {mean_score}\n')
-            f.write(f'Accuracy.sd: {std_score}\n')
-
-        if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
-            os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
-
-        create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{name}_{ms_file_name}'), dirpath)
-
-    shutil.rmtree(cachedir)
-
 
 def plot_roc(ms_info, pipeline, model_name, output_dir, n_splits=5, n_repeats=10):
     X = ms_info['X']
@@ -576,16 +479,14 @@ def plot_SHAP(X, y, features, model, pipeline, output_dir, name):
     print("Summary plot for all features saved as 'shap_combined_plots.png'")
 
 
-def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select,
-                         n_splits=5, n_repeats=10, round_scores=True):
+def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select,
+               n_splits=5, n_repeats=10, round_scores=True):
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
     current_working_dir = os.getcwd()
     cachedir = mkdtemp()
     memory = Memory(location=cachedir, verbose=0)
-
-    overall_results = []
 
     log10_pipe = FunctionTransformer(np.log10) if log10_select else 'passthrough'
     norm_pipe = Normalizer(norm='l1') if normalize_select else 'passthrough'
@@ -679,8 +580,10 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
             scores_df = scores_df.round(3)
         scores_df.to_csv(f'{dirpath}/cv_{name}.csv', index=False)
 
+        # Generate the SHAP values
         plot_SHAP(X, y, features, model, pipeline, dirpath, name)
 
+        # Generate the receiver operating characteristic (ROC) curves
         roc_auc = plot_roc(ms_info, pipeline, name, dirpath)
 
 
@@ -703,357 +606,6 @@ def run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_c
         create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{name}_{ms_file_name}'), dirpath)
 
     shutil.rmtree(cachedir)
-
-
-def run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select):
-    X = ms_info['X']
-    y = ms_info['y']
-    current_working_dir = os.getcwd()
-    cachedir = mkdtemp()
-    memory = Memory(location=cachedir, verbose=0)
-
-    overall_results = []
-
-    if log10_select:
-        log10_pipe = FunctionTransformer(safe_log10)
-    else:
-        log10_pipe = None
-
-    if normalize_select:
-        norm_pipe = Normalizer(norm='l1')
-    else:
-        norm_pipe = None
-
-    for name, model, param_grid in list_of_models:
-        print(f'Starting {name}')
-
-        pipeline = Pipeline([
-            ('normalize', norm_pipe),
-            ('transform', log10_pipe),  # FunctionTransformer(np.log10)), # log10_select
-            ('scaler', StandardScaler()),
-            ('Reduction', get_feature_reduction(feature_reduce_choice)),
-            ('classifier', model)
-        ], memory=memory)
-
-        # Perform grid search using the entire data
-        grid_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='accuracy')
-        grid_search.fit(X, y)
-        best_params = grid_search.best_params_
-
-        # Use the best parameters for the model
-        pipeline.set_params(**best_params)
-
-        outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=10, random_state=seed)
-
-        accuracy_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='accuracy')
-        print("Accuracy scores done")
-
-        balanced_accuracy_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='balanced_accuracy')
-        print("Balanced accuracy scores done")
-
-        recall_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='recall')
-        print("Recall scores done")
-
-        f1_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='f1')
-        print("F1 scores done")
-
-        precision_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='precision')
-        print("Precision scores done")
-
-        # Calculate mean and standard deviation for metrics
-        mean_balanced_accuracy = np.mean(balanced_accuracy_scores)
-        std_balanced_accuracy = np.std(balanced_accuracy_scores)
-        mean_recall = np.mean(recall_scores)
-        std_recall = np.std(recall_scores)
-        mean_f1 = np.mean(f1_scores)
-        std_f1 = np.std(f1_scores)
-        mean_precision = np.mean(precision_scores)
-        std_precision = np.std(precision_scores)
-        mean_score = np.mean(accuracy_scores)
-        std_score = np.std(accuracy_scores)
-
-        dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
-
-        # Save cross-validation scores for debugging
-        scores_data = {
-            'accuracy_scores': accuracy_scores,
-            'balanced_accuracy_scores': balanced_accuracy_scores,
-            'recall_scores': recall_scores,
-            'f1_scores': f1_scores,
-            'precision_scores': precision_scores
-        }
-        scores_df = pd.DataFrame(scores_data)
-        scores_df.to_csv(f'{dirpath}/cv_scores_{name}.csv', index=False)
-
-        with open(f'{dirpath}/metrics_cv_score{name}.txt', 'w') as f:
-            f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
-            f.write(f'Bal.Acc.sd: {std_balanced_accuracy}\n')
-            f.write(f'Recall.avg: {mean_recall}\n')
-            f.write(f'Recall.sd: {std_recall}\n')
-            f.write(f'Precision.avg: {mean_precision}\n')
-            f.write(f'Precision.sd: {std_precision}\n')
-            f.write(f'F1.avg: {mean_f1}\n')
-            f.write(f'F1.sd: {std_f1}\n')
-            f.write(f'Accuracy.avg: {mean_score}\n')
-            f.write(f'Accuracy.sd: {std_score}\n')
-
-        if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
-            os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
-
-        create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{name}_{ms_file_name}'), dirpath)
-
-    shutil.rmtree(cachedir)
-
-
-def run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice, log10_select, normalize_select):
-    X = ms_info['X']
-    y = ms_info['y']
-    current_working_dir = os.getcwd()
-
-    cachedir = mkdtemp()
-    memory = Memory(location=cachedir, verbose=0)
-
-    overall_results = []
-
-    for name, model, param_grid in list_of_models:
-        print(f'Starting {name}')
-
-        dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
-
-        pipeline = Pipeline([
-            ('scaler', StandardScaler()),
-            ('Reduction', get_feature_reduction(feature_reduce_choice)),
-            ('classifier', model)
-        ], memory=memory)
-
-        # Perform grid search using the entire data
-        grid_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=seed)
-        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='accuracy')
-        grid_search.fit(X, y)
-        best_params = grid_search.best_params_
-
-        # Use the best parameters for the model
-        pipeline.set_params(**best_params)
-
-        outer_cv = StratifiedKFold(n_splits=5, random_state=seed, shuffle=True)
-
-        all_accuracy_scores = []
-        all_balanced_accuracy_scores = []
-        all_recall_scores = []
-        all_f1_scores = []
-        all_precision_scores = []
-
-        for repeat in range(10):
-            print(f'Repeat {repeat + 1}/10')
-
-            accuracy_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='accuracy')
-            balanced_accuracy_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='balanced_accuracy')
-            recall_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='recall')
-            f1_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='f1')
-            precision_scores = cross_val_score(pipeline, X, y, cv=outer_cv, scoring='precision')
-
-            print(f'This is the accuracy score {accuracy_scores}')
-            all_accuracy_scores.append(np.mean(accuracy_scores))
-            all_balanced_accuracy_scores.append(np.mean(balanced_accuracy_scores))
-            all_recall_scores.append(np.mean(recall_scores))
-            all_f1_scores.append(np.mean(f1_scores))
-            all_precision_scores.append(np.mean(precision_scores))
-
-        # Save cross-validation scores for debugging
-        scores_data = {
-            'accuracy_scores': all_accuracy_scores,
-            'balanced_accuracy_scores': all_balanced_accuracy_scores,
-            'recall_scores': all_recall_scores,
-            'f1_scores': all_f1_scores,
-            'precision_scores': all_precision_scores
-        }
-        scores_df = pd.DataFrame(scores_data)
-        scores_df.to_csv(f'{dirpath}/loop_cross_val_scores_{name}.csv', index=False)
-
-        # Calculate mean and standard deviation for metrics
-        mean_balanced_accuracy = np.mean(all_balanced_accuracy_scores)
-        std_balanced_accuracy = np.std(all_balanced_accuracy_scores)
-        mean_recall = np.mean(all_recall_scores)
-        std_recall = np.std(all_recall_scores)
-        mean_f1 = np.mean(all_f1_scores)
-        std_f1 = np.std(all_f1_scores)
-        mean_precision = np.mean(all_precision_scores)
-        std_precision = np.std(all_precision_scores)
-        mean_score = np.mean(all_accuracy_scores)
-        std_score = np.std(all_accuracy_scores)
-
-        with open(f'{dirpath}/metrics_loop_{name}.txt', 'w') as f:
-            f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
-            f.write(f'Bal.Acc.sd: {std_balanced_accuracy}\n')
-            f.write(f'Recall.avg: {mean_recall}\n')
-            f.write(f'Recall.sd: {std_recall}\n')
-            f.write(f'Precision.avg: {mean_precision}\n')
-            f.write(f'Precision.sd: {std_precision}\n')
-            f.write(f'F1.avg: {mean_f1}\n')
-            f.write(f'F1.sd: {std_f1}\n')
-            f.write(f'Accuracy.avg: {mean_score}\n')
-            f.write(f'Accuracy.sd: {std_score}\n')
-
-        if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
-            os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
-
-        create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{name}_{ms_file_name}'), dirpath)
-
-    shutil.rmtree(cachedir)
-
-
-def run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice):
-    X = ms_info['X']
-    y = ms_info['y']
-
-    cachedir = mkdtemp()
-    memory = Memory(location=cachedir, verbose=0)
-
-    overall_results = []
-
-    for name, model, param_grid in list_of_models:
-        print(f'Starting {name}')
-
-        pipeline = Pipeline([
-            ('scaler', StandardScaler()),
-            ('Reduction', get_feature_reduction(feature_reduce_choice)),
-            ('classifier', model)
-        ], memory=memory)
-
-        # Perform grid search using the entire data
-        grid_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=1, random_state=seed)
-        grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='accuracy')
-        grid_search.fit(X, y)
-        best_params = grid_search.best_params_
-
-        # Use the best parameters for the model
-        pipeline.set_params(**best_params)
-
-        all_roc_data = []
-        all_splits_data = []  # Store data for each split
-        all_features_data = []
-        all_orig_data = []
-        all_orig_data.append(
-            ["accuracy_score", "balanced_accuracy_score", "recall_score", "f1_score", "precision_score"])
-        all_repeat_mean_balanced_accuracies = []
-        all_repeat_std_balanced_accuracies = []
-        all_repeat_mean_recalls = []
-        all_repeat_std_recalls = []
-        all_repeat_mean_f1_scores = []
-        all_repeat_std_f1_scores = []
-        all_repeat_mean_precisions = []
-        all_repeat_std_precisions = []
-        all_repeat_mean_accuracies = []
-        all_repeat_std_accuracies = []
-
-        outer_cv = RepeatedStratifiedKFold(n_splits=5, n_repeats=1, random_state=seed)
-
-        for repeat in range(10):
-            print(f'Repeat {repeat + 1}/10')
-            repeat_accuracy = []
-            repeat_balanced_accuracies = []
-            repeat_recalls = []
-            repeat_f1_scores = []
-            repeat_precisions = []
-
-            #scores = cross_val_score(pipeline, X, y, cv=outer_cv)
-
-            for train_idx, test_idx in outer_cv.split(X, y):
-                X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
-                y_train, y_test = y[train_idx], y[test_idx]
-
-                best_model = pipeline.fit(X_train, y_train)
-                y_pred = best_model.predict(X_test)
-
-                #y_true_repeat.extend(y_test) # we are not doing accuracy_score(y_true_repeat, y_pred_repeat)
-                #y_pred_repeat.extend(y_pred)
-
-                repeat_accuracy.append(accuracy_score(y_test, y_pred))
-                repeat_balanced_accuracies.append(balanced_accuracy_score(y_test, y_pred))
-                repeat_recalls.append(recall_score(y_test, y_pred))
-                repeat_f1_scores.append(f1_score(y_test, y_pred))
-                repeat_precisions.append(precision_score(y_test, y_pred))
-
-                all_orig_data.append([accuracy_score(y_test, y_pred), balanced_accuracy_score(y_test, y_pred),
-                                      recall_score(y_test, y_pred), f1_score(y_test, y_pred),
-                                      precision_score(y_test, y_pred)])
-
-            all_repeat_mean_accuracies.append(np.mean(repeat_accuracy))
-            all_repeat_std_accuracies.append(np.std(repeat_accuracy))
-            all_repeat_mean_balanced_accuracies.append(np.mean(repeat_balanced_accuracies))
-            all_repeat_std_balanced_accuracies.append(np.std(repeat_balanced_accuracies))
-            all_repeat_mean_recalls.append(np.mean(repeat_recalls))
-            all_repeat_std_recalls.append(np.std(repeat_recalls))
-            all_repeat_mean_f1_scores.append(np.mean(repeat_f1_scores))
-            all_repeat_std_f1_scores.append(np.std(repeat_f1_scores))
-            all_repeat_mean_precisions.append(np.mean(repeat_precisions))
-            all_repeat_std_precisions.append(np.std(repeat_precisions))
-
-        # Calculate mean and standard deviation for metrics
-        mean_balanced_accuracy = np.mean(all_repeat_mean_balanced_accuracies)
-        std_balanced_accuracy = np.std(all_repeat_mean_balanced_accuracies)
-        mean_recall = np.mean(all_repeat_mean_recalls)
-        std_recall = np.std(all_repeat_mean_recalls)
-        mean_f1 = np.mean(all_repeat_mean_f1_scores)
-        std_f1 = np.std(all_repeat_mean_f1_scores)
-        mean_precision = np.mean(all_repeat_mean_precisions)
-        std_precision = np.std(all_repeat_mean_precisions)
-        mean_score = np.mean(all_repeat_mean_accuracies)
-        std_score = np.std(all_repeat_mean_accuracies)
-
-        dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
-
-        """
-        all_accuracies_data.append(accuracy_score(y_test, y_pred))  # Store features for each split
-        all_balanced_accuracies_data.append(balanced_accuracy_score(y_test, y_pred))
-        all_recalls_data.append(recall_score(y_test, y_pred))
-        all_f1_scores_data.append(f1_score(y_test, y_pred))
-        all_precisions_data.append(precision_score(y_test, y_pred))
-        """
-
-        all_precisions_data_df = pd.DataFrame(all_orig_data)
-        all_precisions_data_df.to_csv(f'{dirpath}/values_orig_{name}.csv', index=False)
-
-        # Combine all features data into a single DataFrame and save to CSV
-        all_features_data_df = pd.DataFrame(all_features_data)
-        all_features_data_df.to_csv(f'{dirpath}/features_data_orig_{name}.csv', index=False)
-
-        # Combine ROC data
-        """fpr_all, tpr_all, roc_auc_all = zip(*all_roc_data)
-        mean_fpr = np.mean(fpr_all, axis=0)
-        mean_tpr = np.mean(tpr_all, axis=0)
-        mean_roc_auc = np.mean(roc_auc_all)"""
-
-        #roc_data = pd.DataFrame({'fpr': mean_fpr, 'tpr': mean_tpr})
-        #roc_data.to_csv(f'{dirpath}/roc_data_{name}.csv', index=False)
-
-        with open(f'{dirpath}/metrics_orig_{name}.txt', 'w') as f:
-            #f.write(f'Mean balanced accuracy: {mean_balanced_accuracy}\n')
-            f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
-            f.write(f'Bal.Acc.sd: {std_balanced_accuracy}\n')
-            f.write(f'Recall.avg: {mean_recall}\n')
-            f.write(f'Recall.sd: {std_recall}\n')
-            f.write(f'Precision.avg: {mean_precision}\n')
-            f.write(f'Precision.sd: {std_precision}\n')
-            f.write(f'F1.avg: {mean_f1}\n')
-            f.write(f'F1.sd: {std_f1}\n')
-            f.write(f'acu.mean: {mean_score}\n')
-            f.write(f'acu.sd: {std_score}\n')
-
-            # f.write(f'Mean AUC: {mean_roc_auc}\n')
-            # f.write(f'Best parameters: {grid_search.best_params_}\n')
-
-        with open(f'{dirpath}/overall_orig_{name}.txt', 'w') as f:
-            f.write(f'Overall So Far: {overall_results}\n')
-
-        if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
-            os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
-
-        create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{name}_{ms_file_name}'), dirpath)
-
-    shutil.rmtree(cachedir)
-
 
 def resetDirs(list_of_models):
     for name, model, param_grid in list_of_models:
@@ -1134,7 +686,7 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
     run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)"""
 
     print(f"------> Starting CV avg SD {ms_input_file} / {feature_reduce_choice}... with {seed}")
-    run_models_cv_avg_sd(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
+    run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
 
     # print(f"------> Starting CV_Score ... with {seed}")
     # run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
@@ -1169,9 +721,7 @@ if __name__ == "__main__":
 
     main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  #, args.set_seed)
 
-import csv
-import importlib.metadata
-import sys
+
 
 # Define the citation dictionary
 citation_dict = {
@@ -1218,7 +768,8 @@ libraries = [
 # Function to get the version of a library, with handling for specific functions from scikit-learn
 def get_package_version(library):
     try:
-        if library in ["roc_curve", "auc", "balanced_accuracy_score", "recall_score", "f1_score", "precision_score", "accuracy_score", "SVC"]:
+        if library in ["roc_curve", "auc", "balanced_accuracy_score", "recall_score", "f1_score", "precision_score",
+                       "accuracy_score", "SVC"]:
             return importlib.metadata.version("scikit-learn")  # All are part of scikit-learn
         elif library == "Memory":
             return "Joblib " + importlib.metadata.version("joblib")  # Memory is part of joblib
