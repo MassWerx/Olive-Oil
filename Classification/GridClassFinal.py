@@ -89,6 +89,27 @@ def get_feature_reduction(feature_reduce_choice):
             quit()
     return reduction_fun
 
+"""
+Function: load_data_from_file
+-----------------------------
+This function loads data from a CSV file into a pandas DataFrame, with an option to flip (transpose) the DataFrame.
+If `flip` is True, the DataFrame is transposed, the first row is set as the header, and the first row is removed. 
+Otherwise, the file is read with the first row as the header.
+
+Parameters:
+-----------
+input_file : str
+    The file path of the CSV file to load.
+
+flip : bool
+    If True, the DataFrame will be transposed (rows become columns and vice versa).
+
+Returns:
+--------
+pd.DataFrame
+    A pandas DataFrame containing the loaded data.
+"""
+
 
 def load_data_from_file(input_file, flip):
     if flip:
@@ -99,100 +120,111 @@ def load_data_from_file(input_file, flip):
     return df
 
 
+"""
+Function: load_data_frame
+-------------------------
+This function processes an input pandas DataFrame to extract sample names, labels, and feature data. It also 
+converts categorical labels into a one-hot encoded format and computes the target labels as integers. The processed 
+data, along with class names and feature names, is organized into a dictionary for further use in machine learning 
+tasks.
+
+Parameters:
+-----------
+input_dataframe : pd.DataFrame
+    A pandas DataFrame containing the dataset. The first column represents the sample names, the second column 
+    contains the labels, and the remaining columns are the features.
+
+Returns:
+--------
+dict
+    A dictionary (ms_info) containing the following keys:
+    - 'class_names': List of unique class names from the labels.
+    - 'labels': The original labels as extracted from the input DataFrame.
+    - 'X': The features DataFrame.
+    - 'y': The numeric labels corresponding to the one-hot encoded classes.
+    - 'samples': The sample names.
+    - 'features': List of feature names.
+    - 'feature_names': List of feature names (identical to 'features').
+"""
 def load_data_frame(input_dataframe):
+    # Extract samples, labels, and features
     samples = input_dataframe.iloc[:, 0]
     labels = input_dataframe.iloc[:, 1]
     data_table = input_dataframe.iloc[:, 2:]
-    features = input_dataframe.iloc[:, 2:].columns.values.tolist()
-    features_names = features  #.to_numpy().astype(str)
+    features = data_table.columns.values.tolist()
 
+    # One-hot encode the labels
     label_table = pd.get_dummies(labels)
     class_names = label_table.columns.to_numpy()
 
+    # Convert labels to numeric form using OneHotEncoder
     encoder = OneHotEncoder(sparse_output=False)
     oil_y_num = encoder.fit_transform(labels.to_numpy().reshape(-1, 1))
-    X = data_table
     y = np.argmax(oil_y_num, axis=1)
 
+    # Construct the final dictionary with all necessary information
     ms_info = {
         'class_names': class_names,
         'labels': labels,
-        'X': pd.DataFrame(X, columns=features_names),
+        'X': pd.DataFrame(data_table, columns=features),
         'y': y,
         'samples': samples,
         'features': features,
-        'feature_names': features_names
+        'feature_names': features
     }
     return ms_info
 
 
 def build_tf_model(n_features, n_classes, seed):
-    """ Create a TF Model
-  Args:
-    Xn (Pandas dataframe):  features after elimiination
-    n_classes () : lables
-    seed (number) : remove random resaults
-  Attributes:
+    """Create and return a TensorFlow model for classification.
 
-  Raises:
+    This function sets various random seeds to ensure reproducibility across
+    multiple stages (Python, NumPy, TensorFlow). It builds a neural network
+    using Keras with specific configurations, including dropout, regularization,
+    and learning rate schedules.
 
-  Returns:
-    a TensorFlow Model
-  """
+    Args:
+        n_features (int): Number of input features in the dataset.
+        n_classes (int): Number of output classes for classification.
+        seed (int): Seed value for controlling randomization across libraries.
 
-    # Seed value
-    # Apparently you may use different seed values at each stage
-    seed_value = seed
+    Returns:
+        tf.keras.Model: Compiled TensorFlow model ready for training.
+    """
 
-    # 1. Set `PYTHONHASHSEED` environment variable at a fixed value
-    os.environ['PYTHONHASHSEED'] = str(seed_value)
+    # Set random seeds for reproducibility
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    tf.random.set_seed(seed)
 
-    # 2. Set `python` built-in pseudo-random generator at a fixed value
-    random.seed(seed_value)
-
-    # 3. Set `numpy` pseudo-random generator at a fixed value
-    np.random.seed(seed_value)
-
-    # 4. Set the `tensorflow` pseudo-random generator at a fixed value
-    tf.random.set_seed(seed_value)
-    # for later versions:
-    # tf.compat.v1.set_random_seed(seed_value)
-
-    # 5. Configure a new global `tensorflow` session
-    """from keras import backend as K
-  session_conf = tf.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
-  sess = tf.Session(graph=tf.get_default_graph(), config=session_conf)
-  K.set_session(sess)"""
-    # for later versions:
-    # session_conf = tf.compat.v1.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
-    # sess = tf.compat.v1.Session(graph=tf.compat.v1.get_default_graph(), config=session_conf)
-    # tf.compat.v1.keras.backend.set_session(sess)
-
+    # Model parameters
     drop_out_seed = 0
-
-    # TensorFlow Paramaters
-    TF_DROPOUT_RATE = .2  # current from report .3
-    TF_EPOCHS = 220  # current from report 140
+    TF_DROPOUT_RATE = 0.2
+    TF_EPOCHS = 220
     TF_LEARN_RATE = 0.001
-    TF_NUM_OF_NEURONS = 40  # current from report 32
+    TF_NUM_OF_NEURONS = 40
 
+    # Define the TensorFlow model
     tf_model = tf.keras.models.Sequential([
         tf.keras.Input(shape=(n_features,)),
-        tf.keras.layers.Dense(TF_NUM_OF_NEURONS, activation=tf.nn.relu),  # input shape required train_x
-        tf.keras.layers.Dropout(TF_DROPOUT_RATE, noise_shape=None, seed=drop_out_seed),
-        tf.keras.layers.Dense(TF_NUM_OF_NEURONS, kernel_regularizer=tf.keras.regularizers.l2(0.001),
-                              activation=tf.nn.relu),
-        tf.keras.layers.Dense(n_classes, activation='softmax')])
+        tf.keras.layers.Dense(TF_NUM_OF_NEURONS, activation='relu'),
+        tf.keras.layers.Dropout(TF_DROPOUT_RATE, seed=drop_out_seed),
+        tf.keras.layers.Dense(TF_NUM_OF_NEURONS, kernel_regularizer=tf.keras.regularizers.l2(0.001), activation='relu'),
+        tf.keras.layers.Dense(n_classes, activation='softmax')
+    ])
 
-    lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(TF_LEARN_RATE,
-                                                                 decay_steps=2,  #1, #2, # train_x.size * 1000,
-                                                                 decay_rate=1,  #.5, #1,
-                                                                 staircase=False)
+    # Learning rate schedule
+    lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
+        TF_LEARN_RATE,
+        decay_steps=2,  # Adjust based on training data size
+        decay_rate=1,
+        staircase=False
+    )
 
-    tf_optimizer = tf.keras.optimizers.Adam()  #lr_schedule)
-
+    # Compile the model
+    tf_optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
     tf_model.compile(optimizer=tf_optimizer,
-                     # loss='categorical_crossentropy',
                      loss='sparse_categorical_crossentropy',
                      metrics=['acc'])
 
@@ -201,99 +233,138 @@ def build_tf_model(n_features, n_classes, seed):
 
 class MyKerasClf:
     """
-  Custom Keras Classifier.
+    Custom Keras Classifier wrapper to be compatible with scikit-learn's API.
 
-  Args:
-      n_classes (int): The number of classes in the classification problem.
-      seed (int): The seed value for random number generation.
+    Args:
+        n_classes (int): The number of output classes for classification.
+        seed (int): Seed value for controlling randomization in the model.
 
-  Attributes:
-      n_classes (int): The number of classes in the classification problem.
-      seed (int): The seed value for random number generation.
+    Attributes:
+        n_classes (int): The number of output classes.
+        seed (int): Seed value for controlling randomization.
+        clf (KerasClassifier): The Keras classifier model.
 
-  Methods:
-      predict(X):
-          Predicts the class labels for the given input data.
-
-      create_model(learn_rate=0.01, weight_constraint=0):
-          Creates a Keras model with the specified learning rate and weight constraint.
-
-      fit(X, y, **kwargs):
-          Fits the Keras model to the given input data and labels.
-
-      predict_proba(X):
-          Predicts class probabilities for the given input data.
-
-  """
+    Methods:
+        predict(X):
+            Predict the class labels for the given input data.
+        create_model(learn_rate=0.01, weight_constraint=0):
+            Creates the Keras model with the specified parameters.
+        fit(X, y, **kwargs):
+            Fit the model to the given input data and labels.
+        predict_proba(X):
+            Predict class probabilities for the given input data.
+        get_params(deep=True):
+            Get parameters for this estimator.
+        set_params(**params):
+            Set the parameters of this estimator.
+    """
 
     def __init__(self, n_classes, seed) -> None:
-        super().__init__()
         self.n_classes = n_classes
         self.seed = seed
 
     def predict(self, X):
+        """Predict class labels for the input data."""
         y_pred_nn = self.clf.predict(X)
         return np.array(y_pred_nn).flatten()
 
     def create_model(self, learn_rate=0.01, weight_constraint=0):
+        """Create a TensorFlow model with the specified learning rate and constraints."""
         model = build_tf_model(self.input_shape, self.n_classes, self.seed)
         return model
 
     def fit(self, X, y, **kwargs):
+        """Fit the Keras model to the input data."""
         self.input_shape = X.shape[1]
         self.classes_ = np.unique(y)
         self.clf = KerasClassifier(model=self.create_model(), verbose=0, epochs=220, batch_size=100)
         self.clf.fit(X, y, **kwargs)
 
     def predict_proba(self, X):
+        """Predict class probabilities for the input data."""
         return self.clf.predict_proba(X)
 
     def get_params(self, deep=True):
+        """Get parameters for this estimator."""
         return {"n_classes": self.n_classes, "seed": self.seed}
 
     def set_params(self, **params):
+        """Set the parameters of this estimator."""
         for key, value in params.items():
             setattr(self, key, value)
         return self
 
 
+
+"""
+Function: get_models(y)
+Purpose:
+    This function generates a list of machine learning models along with their respective hyperparameter grids
+    for use in model selection and hyperparameter tuning. The models include a variety of classifiers such as
+    SVM, AdaBoost, Logistic Regression, K-Nearest Neighbors, Gradient Boosting, Random Forest, and a custom 
+    Keras-based artificial neural network (ANN).
+
+Parameters:
+    y (array-like): Target labels from the dataset. Used to determine the number of classes in ANN.
+
+Returns:
+    list_of_models (list): A list of tuples, where each tuple contains:
+        - A string representing the model's name
+        - The classifier object
+        - A dictionary of hyperparameter grids for the classifier
+"""
+
 def get_models(y):
     list_of_models = [
+        # Support Vector Machine (SVM)
         ('SVM', SVC(probability=True, random_state=seed), {
             'classifier__C': [0.1, 1, 10],
             'classifier__kernel': ['linear', 'rbf']
         }),
+
+        # AdaBoost Classifier
         ('AdaBoost', AdaBoostClassifier(random_state=seed), {
             'classifier__n_estimators': [50, 100, 200],
             'classifier__learning_rate': [0.01, 0.1, 1]
         }),
+
+        # Logistic Regression
         ('LogisticRegression', LogisticRegression(max_iter=1000, random_state=seed), {
             'classifier__C': [0.1, 1, 10],
             'classifier__penalty': ['l2'],
             'classifier__solver': ['lbfgs']
         }),
+
+        # K-Nearest Neighbors (KNN)
         ('KNeighbors', KNeighborsClassifier(), {
             'classifier__n_neighbors': [3, 5, 7],
             'classifier__weights': ['uniform', 'distance'],
             'classifier__metric': ['euclidean', 'manhattan']
         }),
+
+        # Gradient Boosting Classifier
         ('GradientBoosting', GradientBoostingClassifier(random_state=seed), {
             'classifier__n_estimators': [100, 200, 300],
             'classifier__learning_rate': [0.01, 0.1, 0.2],
             'classifier__max_depth': [3, 5, 7]
         }),
+
+        # Random Forest Classifier
         ('RandomForest', RandomForestClassifier(n_jobs=-1, random_state=seed), {
             'classifier__n_estimators': [100, 200, 300, 500],
             'classifier__max_depth': [None, 10, 20, 30],
             'classifier__min_samples_split': [2, 5, 10],
             'classifier__min_samples_leaf': [1, 2, 4]
         }),
+
+        # Custom Keras Classifier (ANN)
         ('ANN', MyKerasClf(n_classes=len(np.unique(y)), seed=seed), {
             'classifier__learn_rate': [0.001, 0.01],
             'classifier__weight_constraint': [0, 1]
         })
     ]
 
+    # Example shortened list for testing purposes
     test_list_of_models_short = [
         ('LogisticRegression', LogisticRegression(max_iter=1000, random_state=seed), {
             'classifier__C': [0.1, 1, 10],
@@ -301,168 +372,284 @@ def get_models(y):
             'classifier__solver': ['lbfgs']
         }),
     ]
+
     return list_of_models
 
+
+
+import pandas as pd
+import plotly.express as px
+from sklearn.model_selection import RepeatedStratifiedKFold
+from sklearn.metrics import roc_curve, auc
+
+"""
+Function: plot_roc
+-------------------
+Generates and saves the ROC curve and AUC (Area Under Curve) for a given model pipeline using repeated 
+stratified k-fold cross-validation. The function collects ROC curve points, calculates the AUC, and saves 
+the ROC data and plot.
+
+Parameters:
+-----------
+ms_info : dict
+    Dictionary containing the feature matrix 'X', target labels 'y', and 'feature_names'.
+
+pipeline : Pipeline
+    A scikit-learn pipeline containing the model and preprocessing steps.
+
+model_name : str
+    Name of the model, used to save output files.
+
+output_dir : str
+    Directory where the ROC plot and data will be saved.
+
+n_splits : int, optional (default=5)
+    Number of folds for the k-fold cross-validation.
+
+n_repeats : int, optional (default=10)
+    Number of times the k-fold cross-validation is repeated.
+
+Returns:
+--------
+roc_auc : float
+    The area under the ROC curve (AUC), rounded to 3 decimal places.
+"""
+
+
 def plot_roc(ms_info, pipeline, model_name, output_dir, n_splits=5, n_repeats=10):
+    # Extract feature matrix, target labels, and feature names from ms_info
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
+
+    # Initialize cross-validation scheme
     outer_cv = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=seed)
 
+    # Initialize lists to collect true labels and predicted probabilities
     all_y_true = []
     all_y_scores = []
+
+    # Perform cross-validation
     for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
-        print(f'Step = {fold_idx}')
+        print(f'Processing fold {fold_idx}')
+
+        # Split data into training and testing sets
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
         y_train, y_test = y[train_idx], y[test_idx]
 
+        # Train the pipeline and predict probabilities
         pipeline.fit(X_train, y_train)
-        y_score = pipeline.predict_proba(X_test)[:, 1]
+        # By default, the ROC curve is often computed for class 1 in binary classification (positive class),
+        # treating class 0 as the negative class.
+        y_score = pipeline.predict_proba(X_test)[:, 1]  # Get probabilities for class 1
 
+        # Append true labels and scores
         all_y_true.extend(y_test)
         all_y_scores.extend(y_score)
 
+    # Compute ROC curve and AUC
     fpr, tpr, thresholds = roc_curve(all_y_true, all_y_scores)
     roc_auc = round(auc(fpr, tpr), 3)
-    # ROC
-    # Generate the plot with markers
+
+    # Save ROC data to a CSV file
     roc_data = pd.DataFrame({'fpr': fpr, 'tpr': tpr, 'thresholds': thresholds})
     roc_data.to_csv(f'{output_dir}/roc_data_{model_name}.csv', index=False)
+
+    # Generate ROC curve plot using Plotly
     fig = px.area(
         x=fpr, y=tpr,
-        title=f'ROC Curve (AUC={auc(fpr, tpr):.2f})',
+        title=f'ROC Curve (AUC={roc_auc:.2f})',
         labels=dict(x='False Positive Rate', y='True Positive Rate'),
-        width=2100, height=1500  # Set size to match 7x5 inches at 300 DPI
+        width=2100, height=1500  # Adjust size to 7x5 inches at 300 DPI
     )
 
-    # Add the diagonal line
+    # Add diagonal reference line
     fig.add_shape(
         type='line', line=dict(dash='dash'),
         x0=0, x1=1, y0=0, y1=1
     )
 
-    # Customize axes
+    # Customize plot axes
     fig.update_yaxes(scaleanchor="x", scaleratio=1)
     fig.update_xaxes(constrain='domain')
 
-    # Customize axes and text sizes
+    # Customize title and axis font sizes
     fig.update_layout(
-        title=dict(font=dict(size=48)),  # Adjust title font size
-        xaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),  # Adjust x-axis title and tick font size
-        yaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),  # Adjust y-axis title and tick font size
+        title=dict(font=dict(size=48)),
+        xaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),
+        yaxis=dict(title=dict(font=dict(size=48)), tickfont=dict(size=40)),
         margin=dict(l=80, r=40, t=80, b=40)
     )
 
+    # Save the ROC plot as an image file
     fig.write_image(f'{output_dir}/{model_name}_ROC.png')
 
     return roc_auc
 
 
-def plot_SHAP(X, y, features, model, pipeline, output_dir, name):
-    # refit to get the SHAP values
-    # Extract the normalization step
-    pipeline.fit(X, y)
-    normalizer = pipeline.named_steps['normalize']
+"""
+Function: plot_SHAP
+-------------------
+This function generates SHAP (SHapley Additive exPlanations) values and visualizations for a given model pipeline. 
+It applies normalization, scaling, and feature reduction (if applicable), followed by SHAP value calculation using 
+appropriate explainers for different model types. It saves SHAP values, beeswarm plots, and summary plots for 
+visualization, as well as selected features to a file.
 
-    # Apply normalization to the data
+Parameters:
+-----------
+X : pd.DataFrame
+    Feature data to be used for SHAP analysis.
+
+y : np.ndarray
+    Target labels for fitting the model.
+
+features : list
+    List of feature names.
+
+model : object
+    The model object (e.g., RandomForestClassifier, LogisticRegression).
+
+pipeline : Pipeline
+    A scikit-learn pipeline that contains various preprocessing steps and the classifier.
+
+output_dir : str
+    Directory where the SHAP plots and data will be saved.
+
+name : str
+    Unique name or identifier for the output files.
+
+Returns:
+--------
+None
+"""
+
+
+def plot_SHAP(X, y, features, model, pipeline, output_dir, name):
+    """
+    Generate SHAP values and visualizations for a given model pipeline.
+
+    This function calculates SHAP (SHapley Additive exPlanations) values for the model in the pipeline, using the
+    appropriate SHAP explainer based on the model type (e.g., TreeExplainer for tree-based models, KernelExplainer
+    for SVC). It also applies normalization, scaling, and feature reduction, saves the selected features, SHAP
+    values, and generates SHAP beeswarm and summary plots.
+
+    Parameters:
+    -----------
+    X : pd.DataFrame
+        Feature data to be used for SHAP analysis.
+
+    y : np.ndarray
+        Target labels for fitting the model.
+
+    features : list
+        List of feature names.
+
+    model : object
+        The model object (e.g., RandomForestClassifier, LogisticRegression).
+
+    pipeline : Pipeline
+        A scikit-learn pipeline containing preprocessing steps and the classifier.
+
+    output_dir : str
+        Directory where the SHAP plots, selected features, and SHAP values will be saved.
+
+    name : str
+        Unique identifier for the output files.
+
+    Returns:
+    --------
+    None
+        Saves the following outputs to `output_dir`:
+        - A text file of selected features.
+        - A pickle file of SHAP values and filtered features.
+        - Beeswarm and summary plots in PNG format.
+        - A combined image of the beeswarm and summary plots.
+    """
+    # Fit the pipeline to extract SHAP values
+    pipeline.fit(X, y)
+
+    # Extract normalization and scaling steps from the pipeline
+    normalizer = pipeline.named_steps['normalize']
     X_nor = normalizer.transform(X)
 
-    # Now extract the StandardScaler from the pipeline
     scaler = pipeline.named_steps['scaler']
-    # Apply the scaler to the normalized data
     X_scale = scaler.transform(X_nor)
 
+    # Apply feature reduction (if any)
     reduction_step = pipeline.named_steps['Reduction']
     if hasattr(reduction_step, 'support_'):
-        print("Got reduction")
-        # Apply the reduction step
+        print("Applying feature reduction...")
         X_reduced = reduction_step.transform(X_scale)
-
-        # Get the support mask to determine selected features
         support_mask = reduction_step.support_
         selected_features = [features[i] for i, flag in enumerate(support_mask) if flag]
     else:
-        # No reduction step, use all normalized features
         X_reduced = X_scale
         selected_features = features
 
-    print(f'{len(y)} & {len(selected_features)} = {selected_features}')
+    print(f'{len(y)} samples & {len(selected_features)} selected features: {selected_features}')
+
     # Save the selected features to a file
     with open(f'{output_dir}/selected_feature_{name}.txt', 'w') as f:
         for feature in selected_features:
             f.write(f"{feature}\n")
 
-
-
-    # Use SHAP explainers based on model type
-    # Grade
+    # Determine the appropriate SHAP explainer based on the model type
     if isinstance(model, MyKerasClf):
-        print("Using KernelExplainer for ANN")
+        print("Using GradientExplainer for ANN")
         explainer = shap.GradientExplainer(pipeline.named_steps['classifier'].clf.model, X_reduced)
         shap_values = explainer.shap_values(X_reduced)
-        shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
+        shap_values = shap_values[:, :, 0]  # Class 0 (adjust as needed)
 
-    # Freshness
     elif isinstance(pipeline.named_steps['classifier'], LogisticRegression):
-        print("\nUsing LinearExplainer for LogisticRegression with probabilities\n")
-        # For Logistic Regression model using LinearExplainer
+        print("Using LinearExplainer for LogisticRegression")
         explainer = shap.LinearExplainer(pipeline.named_steps['classifier'], X_reduced, model_output='probability')
         shap_values = explainer.shap_values(X_reduced)
 
-    # Adult Soy
     elif isinstance(pipeline.named_steps['classifier'], (SVC, KNeighborsClassifier, AdaBoostClassifier)):
-        print("\nUsing KernelExplainer for most\n")
-        # For SVM model
+        print("Using KernelExplainer for SVC, KNN, and AdaBoost")
         explainer = shap.KernelExplainer(pipeline.named_steps['classifier'].predict_proba, X_reduced)
         shap_values = explainer.shap_values(X_reduced)
-        shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
+        shap_values = shap_values[:, :, 0]  # Class 0 (adjust as needed)
         shap_values = np.array(shap_values)
 
-    # Adult Can
     elif isinstance(pipeline.named_steps['classifier'], (RandomForestClassifier, GradientBoostingClassifier)):
-        print("Using TreeExplainer for RF, GB, or AdaBoost")
+        print("Using TreeExplainer for RandomForest, GradientBoosting, or AdaBoost")
         explainer = shap.TreeExplainer(pipeline.named_steps['classifier'])
         shap_values = explainer.shap_values(X_reduced)
-        """
-        Even though you’re working with binary classification, the SHAP library’s handling of 
-        RandomForestClassifier can introduce complexity by generating 3D SHAP values.
-        """
         if isinstance(pipeline.named_steps['classifier'], RandomForestClassifier):
-            shap_values = shap_values[:, :, 0]  # Select class 0 (or modify as needed)
+            shap_values = shap_values[:, :, 0]  # Class 0 (adjust as needed)
 
     else:
         explainer = shap.Explainer(pipeline.named_steps['classifier'], X_reduced)
         shap_values = explainer(X_reduced)
 
-    # Convert shap_values to the required format
+    # Format SHAP values for visualization
     shap_values = shap.Explanation(
         values=shap_values,
         data=X_reduced,
         feature_names=selected_features
     )
 
-    # Assuming you want to store SHAP values, feature names, and model predictions
+    # Save SHAP values and data for future use
     shap_data = {
         'shap_values': shap_values,
         'features': selected_features,
-        'X_filtered': X_reduced  # Input features used for SHAP
+        'X_filtered': X_reduced
     }
-    # Save to a pickle file
     with open(f'{output_dir}/shap_data_{name}.pkl', 'wb') as f:
         pickle.dump(shap_data, f)
 
-    # Generate beeswarm plot for all features
+    # Generate and save beeswarm and summary plots
     shap.summary_plot(shap_values, plot_type="dot", feature_names=selected_features, max_display=10, show=False)
     plt.savefig(f'{output_dir}/shap_beeswarm_{name}_plot.png', dpi=300, bbox_inches='tight')
     plt.close()
-    print("Beeswarm plot saved as 'shap_beeswarm_plot.png'")
 
     plt.figure()
     shap.summary_plot(shap_values, plot_type="bar", feature_names=selected_features, max_display=10, show=False)
     plt.savefig(f'{output_dir}/shap_summary_plot_{name}_all_folds.png', dpi=300, bbox_inches='tight')
     plt.close()
-    print("Summary plot for all features saved as 'shap_summary_plot_all_folds.png'")
 
+    # Combine beeswarm and summary plots into a single image
     bar_plot = Image.open(f'{output_dir}/shap_beeswarm_{name}_plot.png')
     summary_plot = Image.open(f'{output_dir}/shap_summary_plot_{name}_all_folds.png')
 
@@ -476,11 +663,70 @@ def plot_SHAP(X, y, features, model, pipeline, output_dir, name):
     plt.tight_layout()
     plt.savefig(f'{output_dir}/shap_combined_{name}_plots.png', dpi=300)
     plt.close()
-    print("Summary plot for all features saved as 'shap_combined_plots.png'")
+    print(f"Combined SHAP plot saved as 'shap_combined_{name}_plots.png'")
 
 
+"""
+Function: run_models
+--------------------
+This function takes in dataset information, a list of machine learning models, and various pipeline configurations 
+to perform the following tasks:
+1. Create a machine learning pipeline with optional feature reduction, normalization, and log transformation steps.
+2. Perform Grid Search Cross Validation to find the best hyperparameters for each model.
+3. Save the best model parameters and all model parameters to files.
+4. Perform Repeated Stratified K-Fold Cross Validation, collecting and averaging performance metrics (accuracy, recall, etc.).
+5. Save the cross-validation scores and generate SHAP plots and ROC curves.
+6. Zip the output files for easier access.
+"""
 def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice, normalize_select, log10_select,
                n_splits=5, n_repeats=10, round_scores=True):
+    """
+    Run various machine learning models with optional feature reduction, normalization, and log transformation.
+
+    This function creates a machine learning pipeline and performs grid search cross-validation to find the best
+    hyperparameters for each model. It evaluates the models using repeated stratified K-fold cross-validation and
+    saves the results, including SHAP plots and ROC curves.
+
+    Parameters:
+    -----------
+    ms_info : dict
+        A dictionary containing dataset information with keys:
+        - 'X': Features dataset (DataFrame).
+        - 'y': Target labels (array-like).
+        - 'feature_names': List of feature names (list).
+
+    list_of_models : list of tuples
+        A list where each element is a tuple (model_name, model_object, param_grid):
+        - model_name: A string representing the name of the model.
+        - model_object: A scikit-learn compatible model instance.
+        - param_grid: A dictionary of hyperparameters for GridSearchCV.
+
+    ms_file_name : str
+        The name of the dataset file for reference in output files.
+
+    feature_reduce_choice : str
+        The feature reduction method to be used in the pipeline.
+
+    normalize_select : bool
+        Whether to apply normalization in the pipeline.
+
+    log10_select : bool
+        Whether to apply log10 transformation in the pipeline.
+
+    n_splits : int, optional (default=5)
+        Number of folds in Stratified K-Fold Cross Validation.
+
+    n_repeats : int, optional (default=10)
+        Number of repetitions for Repeated Stratified K-Fold Cross Validation.
+
+    round_scores : bool, optional (default=True)
+        Whether to round performance metrics to 3 decimal places.
+
+    Returns:
+    --------
+    None
+        Outputs various files including best model parameters, cross-validation metrics, SHAP plots, and ROC curves.
+    """
     X = ms_info['X']
     y = ms_info['y']
     features = ms_info['feature_names']
@@ -488,12 +734,14 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice, nor
     cachedir = mkdtemp()
     memory = Memory(location=cachedir, verbose=0)
 
+    # Define transformation steps based on flags
     log10_pipe = FunctionTransformer(np.log10) if log10_select else 'passthrough'
     norm_pipe = Normalizer(norm='l1') if normalize_select else 'passthrough'
 
     for name, model, param_grid in list_of_models:
         print(f'Starting {name}')
 
+        # Build the pipeline with optional transformations and feature reduction
         pipeline = Pipeline([
             ('normalize', norm_pipe),
             ('transform', log10_pipe),
@@ -502,42 +750,42 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice, nor
             ('classifier', model)
         ], memory=memory)
 
-        # Perform grid search using the entire data
+        # Perform grid search on the entire dataset
         grid_cv = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=seed)
         grid_search = GridSearchCV(estimator=pipeline, param_grid=param_grid, cv=grid_cv, scoring='neg_log_loss')
         grid_search.fit(X, y)
         best_params = grid_search.best_params_
 
-        # Use the best parameters for the model
+        # Update the pipeline with the best parameters
         pipeline.set_params(**best_params)
 
-        # Save the best parameters
+        # Create output directory for the current model
         dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
-        if not os.path.exists(dirpath):
-            os.makedirs(dirpath)
+        dirpath.mkdir(parents=True, exist_ok=True)
+
+        # Save the best parameters to a JSON file
         with open(f'{dirpath}/best_params_{name}.json', 'w') as f:
             json.dump(best_params, f, indent=4)
 
-        # Extract the best parameters specific to the model
+        # Extract and save only the best parameters specific to the model
         model_best_params = {k.replace('classifier__', ''): v for k, v in best_params.items() if
                              k.startswith('classifier__')}
-
-        # Set the best parameters on the model and save all model parameters
         model.set_params(**model_best_params)
-        model_hyperparameters = model.get_params()
 
-        # Save all model parameters to a file
+        # Save all model parameters to a text file
         with open(f'{dirpath}/all_params_{name}.txt', 'w') as f:
-            for key, value in model_hyperparameters.items():
+            for key, value in model.get_params().items():
                 f.write(f"{key}: {value}\n")
 
+        # Perform Repeated Stratified K-Fold Cross Validation
         outer_cv = RepeatedStratifiedKFold(n_splits=n_splits, n_repeats=n_repeats, random_state=seed)
         all_scores = {'accuracy': [], 'balanced_accuracy': [], 'recall': [], 'f1': [], 'precision': []}
 
+        # Evaluate model performance
         scores = cross_validate(pipeline, X, y, cv=outer_cv,
                                 scoring=['accuracy', 'balanced_accuracy', 'recall', 'f1', 'precision'])
 
-        # Process scores for each repeat
+        # Calculate average scores per repeat
         repeat_averages = {metric: [] for metric in all_scores.keys()}
 
         for repeat in range(n_repeats):
@@ -548,31 +796,14 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice, nor
                 fold_scores = scores[f'test_{metric}'][start_idx:end_idx]
                 repeat_avg = np.mean(fold_scores)
                 repeat_averages[metric].append(repeat_avg)
-                all_scores[metric].extend(fold_scores)  # Store the raw fold scores
+                all_scores[metric].extend(fold_scores)
 
-        # Calculate mean and standard deviation for each metric
-        mean_balanced_accuracy = np.mean(repeat_averages['balanced_accuracy'])
-        std_balanced_accuracy = np.std(repeat_averages['balanced_accuracy'])
-        mean_recall = np.mean(repeat_averages['recall'])
-        std_recall = np.std(repeat_averages['recall'])
-        mean_f1 = np.mean(repeat_averages['f1'])
-        std_f1 = np.std(repeat_averages['f1'])
-        mean_precision = np.mean(repeat_averages['precision'])
-        std_precision = np.std(repeat_averages['precision'])
-        mean_score = np.mean(repeat_averages['accuracy'])
-        std_score = np.std(repeat_averages['accuracy'])
-
+        # Compute mean and standard deviation for each metric
+        metrics_summary = {metric: (np.mean(repeat_averages[metric]), np.std(repeat_averages[metric])) for metric in
+                           all_scores.keys()}
         if round_scores:
-            mean_balanced_accuracy = round(mean_balanced_accuracy, 3)
-            std_balanced_accuracy = round(std_balanced_accuracy, 3)
-            mean_recall = round(mean_recall, 3)
-            std_recall = round(std_recall, 3)
-            mean_f1 = round(mean_f1, 3)
-            std_f1 = round(std_f1, 3)
-            mean_precision = round(mean_precision, 3)
-            std_precision = round(std_precision, 3)
-            mean_score = round(mean_score, 3)
-            std_score = round(std_score, 3)
+            metrics_summary = {metric: (round(mean, 3), round(std, 3)) for metric, (mean, std) in
+                               metrics_summary.items()}
 
         # Save cross-validation scores for debugging
         scores_df = pd.DataFrame(all_scores)
@@ -580,32 +811,25 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice, nor
             scores_df = scores_df.round(3)
         scores_df.to_csv(f'{dirpath}/cv_{name}.csv', index=False)
 
-        # Generate the SHAP values
+        # Generate SHAP values and ROC curve
         plot_SHAP(X, y, features, model, pipeline, dirpath, name)
-
-        # Generate the receiver operating characteristic (ROC) curves
         roc_auc = plot_roc(ms_info, pipeline, name, dirpath)
 
-
+        # Save overall metrics
         with open(f'{dirpath}/metrics_cv_{name}.txt', 'w') as f:
-            f.write(f'Bal.Acc.avg: {mean_balanced_accuracy}\n')
-            f.write(f'Bal.Acc.sd: {std_balanced_accuracy}\n')
-            f.write(f'Recall.avg: {mean_recall}\n')
-            f.write(f'Recall.sd: {std_recall}\n')
-            f.write(f'Precision.avg: {mean_precision}\n')
-            f.write(f'Precision.sd: {std_precision}\n')
-            f.write(f'F1.avg: {mean_f1}\n')
-            f.write(f'F1.sd: {std_f1}\n')
-            f.write(f'Accuracy.avg: {mean_score}\n')
-            f.write(f'Accuracy.sd: {std_score}\n')
+            for metric, (mean, std) in metrics_summary.items():
+                f.write(f'{metric.capitalize()}.avg: {mean}\n')
+                f.write(f'{metric.capitalize()}.sd: {std}\n')
             f.write(f'AUC: {roc_auc}\n')
 
-        if not os.path.exists(os.path.join(current_working_dir, 'zipFiles')):
-            os.makedirs(os.path.join(current_working_dir, 'zipFiles'))
+        # Zip output files for easier access
+        zip_output_dir = Path(current_working_dir) / 'zipFiles'
+        zip_output_dir.mkdir(exist_ok=True)
+        create_zip_file_output(zip_output_dir / f'{name}_{ms_file_name}', dirpath)
 
-        create_zip_file_output(os.path.join(current_working_dir, f'zipFiles/{name}_{ms_file_name}'), dirpath)
-
+    # Clean up the temporary cache directory
     shutil.rmtree(cachedir)
+
 
 def resetDirs(list_of_models):
     for name, model, param_grid in list_of_models:
@@ -619,6 +843,17 @@ seed = 123456
 
 
 def str2bool(v):
+    """Convert a string to a boolean value.
+
+    Args:
+        v: The input value to convert.
+
+    Returns:
+        bool or None: The converted boolean value or None if the input is None.
+
+    Raises:
+        argparse.ArgumentTypeError: If the input is not a valid boolean string.
+    """
     if v is None:
         return None
     if isinstance(v, bool):
@@ -628,7 +863,7 @@ def str2bool(v):
             return True
         elif v.lower() in ('no', 'false', 'f', 'n', '0'):
             return False
-        elif v.lower() == 'none':  # Handle 'none' explicitly
+        elif v.lower() == 'none':
             return None
         else:
             raise argparse.ArgumentTypeError('Boolean value expected or None.')
@@ -636,13 +871,26 @@ def str2bool(v):
 
 
 def str_or_none(v):
+    """Convert a string to None if it equals 'none'.
+
+    Args:
+        v: The input string.
+
+    Returns:
+        str or None: The input string or None if it was 'none'.
+    """
     if v.lower() == 'none':
         return None
     return v
 
 
 def save_input_params(params, output_dir):
-    """Save input parameters to a JSON file."""
+    """Save input parameters to a JSON file.
+
+    Args:
+        params (dict): The input parameters to save.
+        output_dir (str): The directory to save the parameters in.
+    """
     params_file = os.path.join(output_dir, 'input_parameters.json')
     with open(params_file, 'w') as f:
         json.dump(params, f, indent=4)
@@ -650,8 +898,17 @@ def save_input_params(params, output_dir):
 
 
 def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
-    #try:
+    """Main function to process input files and run models.
+
+    Args:
+        ms_input_file (str): Path to the input file.
+        feature_reduce_choice: The feature reduction method chosen.
+        transpose (bool): Whether to transpose the data.
+        norm (bool): Whether to normalize the data.
+        log10 (bool): Whether to apply log10 transformation.
+    """
     print("Starting ... ")
+
     if feature_reduce_choice is None:
         print("No feature reduction method selected. Proceeding without feature reduction.")
     else:
@@ -679,20 +936,8 @@ def main(ms_input_file, feature_reduce_choice, transpose, norm, log10):
     list_of_models = get_models(ms_info['y'])
     resetDirs(list_of_models)
 
-    """print(f"------> Starting orig {ms_input_file} / {feature_reduce_choice}... with {seed}")
-    run_models_org(ms_info, list_of_models, ms_file_name, feature_reduce_choice)"""
-
-    """print(f"------> Starting CV {ms_input_file} / {feature_reduce_choice}... with {seed}")
-    run_models_cv(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)"""
-
     print(f"------> Starting CV avg SD {ms_input_file} / {feature_reduce_choice}... with {seed}")
     run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
-
-    # print(f"------> Starting CV_Score ... with {seed}")
-    # run_models_cv_score(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)
-
-    """print(f"-------> Starting Loop ... with {seed}")
-    run_models_loop(ms_info, list_of_models, ms_file_name, feature_reduce_choice, norm, log10)"""
 
 
 """
@@ -708,7 +953,16 @@ python ../../GridClassFinal.py  Grade_PP_filt_unnorm_9Sep2024.csv Boruta false t
 
 """
 
+import argparse
+
 if __name__ == "__main__":
+    """Main entry point for running regression models with feature reduction.
+
+    This script parses command-line arguments for input file paths, feature reduction methods,
+    and various processing options like transposition, normalization, and logarithmic transformation.
+    It then calls the main function to execute the regression modeling workflow.
+    """
+
     parser = argparse.ArgumentParser(description='Run regression models with feature reduction.')
     parser.add_argument('ms_input_file', type=str, help='Path to the input CSV file.')
     parser.add_argument('feature_reduce_choice', type=str_or_none, nargs='?', default=None,
@@ -716,12 +970,13 @@ if __name__ == "__main__":
     parser.add_argument('transpose', type=str2bool, help='Transpose file (true/false)')
     parser.add_argument('norm', type=str2bool, help='Normalize (true/false)')
     parser.add_argument('log10', type=str2bool, help='Take the log 10 of input in the pipeline (true/false)')
+    # Uncomment to allow seed setting
     # parser.add_argument('set_seed', type=str, help='The Seed to use')
+
     args = parser.parse_args()
 
-    main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  #, args.set_seed)
-
-
+    # Call the main function with parsed arguments
+    main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  # , args.set_seed
 
 # Define the citation dictionary
 citation_dict = {
