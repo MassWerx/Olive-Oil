@@ -63,84 +63,54 @@ def calculate_missing_percentage(df_sample, features, min_peak_height, classes_m
     missing_percent_msg += f' total missing is {missing_percent}</p>'
     return df_sample, missing_percent_msg
 
-def align_peaks_with_features(df_sample, features, mass_tolerance, sample_file):
+
+def align_peaks_with_features(df_sample, features, sample_file, min_peak_height):
     """
-    Align sample peaks (df_sample) with reference features, preserving intensities,
-    and removing any unmatched features. After this step, df_sample should only
-    contain valid features that are present in both df_sample and the reference features.
+    Align sample peaks (df_sample) with reference features, ensuring that:
+    - A new DataFrame is created with all features from the reference list.
+    - Any feature not found in df_sample within PPM tolerance is set to min_peak_height.
+    - If a peak in df_sample is within PPM tolerance of a feature, its intensity is used.
+    - Peaks in df_sample that don't match a feature are logged.
 
     Parameters:
     - df_sample: The input sample data with mass peaks as columns.
     - features: The list of reference features (masses) to align against.
-    - mass_tolerance: A function that calculates the acceptable mass tolerance based on PPM.
     - sample_file: The name of the sample file being processed.
+    - min_peak_height: The default intensity value for missing peaks.
 
     Returns:
-    - df_sample_aligned: The sample data aligned to the reference features.
-    - output_miss: Debugging output indicating which peaks were found and which were missed.
+    - df_sample_aligned: A DataFrame with features aligned to the reference features.
+    - output_miss: Debugging output indicating unused peaks in the sample.
     """
+
+    # Initialize a DataFrame with the reference features and set all intensities to min_peak_height
+    df_aligned = pd.DataFrame(min_peak_height, index=[0], columns=features)
 
     # Convert features and sample columns to numpy arrays for easy matching
     mass_feature_lst = np.asarray(features).astype(float)
     mass_sample_list = df_sample.columns.astype(float)
 
-    sample_features = {}  # To store matched sample masses with corresponding feature masses
-    sample_features_missed = {}  # To store sample masses that couldn't be matched
+    # Track unused peaks from the sample
+    unused_peaks = set(mass_sample_list)
 
-    # Iterate through the sample masses and find the closest feature mass within tolerance
-    for mass_sample in mass_sample_list:
-        # Find the index of the closest feature mass to the current sample mass
-        idx = (np.abs(mass_feature_lst - mass_sample)).argmin()
-        mass_feature = mass_feature_lst[idx]
-        diff = abs(float(mass_sample) - mass_feature)
+    # Iterate over the reference features and match to peaks in df_sample within PPM tolerance
+    for feature in mass_feature_lst:
+        # Find the closest sample peak to the current feature
+        idx = (np.abs(mass_sample_list - feature)).argmin()
+        mass_sample = mass_sample_list[idx]
+        diff = abs(mass_sample - feature)
 
-        # Only match if the difference is within the acceptable mass tolerance
-        if diff < mass_tolerance(mass_feature):
-            # Store the sample mass matched to the feature mass
-            sample_features[mass_sample] = str(mass_feature)
-        else:
-            # If no valid match is found, mark the sample mass as missed
-            sample_features_missed[float(mass_sample)] = float(mass_feature)
+        # If the sample peak is within the mass tolerance, use its intensity
+        if diff < mass_tolerance(feature):
+            df_aligned[feature] = df_sample[mass_sample].values  # Use sample intensity
+            unused_peaks.discard(mass_sample)  # This peak has been used
 
-    # Rename columns in df_sample to reflect the matched features
-    df_sample = df_sample.rename(columns=sample_features)
+    # Create output for any unused peaks in the sample
+    output_miss = f"<p><b>{sample_file}: unused peaks</b></p>"
+    output_miss += ', '.join([str(m) for m in unused_peaks])  # Log unused peaks
 
-    # Keep only the columns (features) that intersect with the known features
-    df_sample = df_sample[df_sample.columns.intersection(features)]
-
-    # Process the matched data and build output tables for debugging and reporting
-    df_sample_aligned, output_miss = process_sample_data(
-        sample_features, sample_features_missed, features, df_sample, sample_file
-    )
-
-    return df_sample_aligned, output_miss
-
-def align_peaks_with_features_bad(df_sample, features, mass_tolerance, sample_file):
-    mass_feature_lst = np.asarray(features).astype(float)
-    mass_sample_list = df_sample.columns.astype(float)
-    sample_features = {}
-    sample_features_missed = {}
-    for mass_sample in mass_sample_list:
-        idx = (np.abs(mass_feature_lst - mass_sample)).argmin()
-        mass_feature = mass_feature_lst[idx]
-        diff = abs(float(mass_sample) - mass_feature)
-        if diff < mass_tolerance(mass_feature):
-            if str(mass_feature) in sample_features.values():
-                mass_key_set = {i for i in sample_features if sample_features[i] == str(mass_feature)}
-                if len(mass_key_set) != 1:
-                    raise Exception(f'ERROR: Duplicate keys added {len(mass_key_set)}')
-                mass_key = list(mass_key_set)[0]
-                diff_key = abs(mass_key - mass_feature)
-                if diff < diff_key:
-                    del sample_features[mass_key]
-                    sample_features_missed[float(mass_key)] = float(mass_feature)
-                    sample_features[mass_sample] = str(mass_feature)
-            else:
-                sample_features[mass_sample] = str(mass_feature)
-        else:
-            sample_features_missed[float(mass_sample)] = float(mass_feature)
-    return process_sample_data(sample_features, sample_features_missed, features, df_sample, sample_file)
-
+    # Return the DataFrame with aligned features, and ensure it's in the correct shape
+    return df_aligned, output_miss
 
 def default_loader(path):
     return joblib.load(path)
@@ -211,7 +181,7 @@ def load_data_frame(input_dataframe):
         'X': pd.DataFrame(data_table, columns=features),
         'y': y,
         'samples': samples,
-        'features': features,
+        'features': [float(i) for i in features],
         'feature_names': features
     }
     return ms_info
@@ -233,13 +203,14 @@ def make_predictions_from_files(directory_path, features, loaded_models, min_pea
             df_sample = df_sample.drop(df_sample.index[0])
 
             # Step 2: Align the sample peaks with features
-            df_sample, output_miss = align_peaks_with_features(df_sample, features, mass_tolerance, sample_file)
+            df_sample, output_miss = align_peaks_with_features(df_sample, features, sample_file, min_peak_height)
             debug_dataframes[sample_file] = output_miss
 
             # Step 3: Calculate missing percentage
             df_sample, missing_percent_msg = calculate_missing_percentage(df_sample, features, min_peak_height,
                                                                           classes_mass_lists)
             sample_updated_dataframe[sample_file] = df_sample
+            df_sample.columns = df_sample.columns.astype(str)
 
             # Step 4: Perform machine learning predictions
             prediction_results = {}
@@ -247,9 +218,9 @@ def make_predictions_from_files(directory_path, features, loaded_models, min_pea
 
             for model_name, model in loaded_models.items():
                 try:
-                    predictions = model.predict(df_sample.values)
+                    predictions = model.predict(df_sample)
                     if hasattr(model, 'predict_proba'):
-                        probabilities = model.predict_proba(df_sample.values)
+                        probabilities = model.predict_proba(df_sample)
                     else:
                         probabilities = None
 
