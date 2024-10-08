@@ -1,4 +1,5 @@
 import os
+import shutil
 import joblib
 import numpy as np
 import pandas as pd
@@ -22,49 +23,7 @@ def build_missing_df(sample_mass, features_mass):
     missing.sort()
     return pd.DataFrame({'mass': missing}).fillna(0).reset_index(drop=True)
 
-
-def process_sample_data(sample_features, sample_features_missed, features, df_sample, sample_file):
-    df_mass_ppm = pd.DataFrame(sample_features.items(), columns=['sample_mass', 'features_mass']).apply(pd.to_numeric,
-                                                                                                        errors='coerce')
-    df_mass_ppm['diff'] = df_mass_ppm.apply(lambda x: abs(x.sample_mass - x.features_mass), axis=1)
-    df_mass_ppm['ppm'] = df_mass_ppm.apply(lambda x: mass_tolerance_error(x.features_mass, x.sample_mass), axis=1)
-    df_sample = df_sample.rename(columns=sample_features)
-    df_sample = df_sample[df_sample.columns.intersection(features)]
-    df_missing = build_missing_df(df_sample.columns.tolist(), features)
-    df_sample_features_missed = pd.DataFrame(list(sample_features_missed.items()),
-                                             columns=['sample_missed', 'feature_target']).apply(pd.to_numeric,
-                                                                                                errors='coerce')
-    df_sample_features_missed['diff'] = df_sample_features_missed.apply(
-        lambda x: abs(x.sample_missed - x.feature_target), axis=1)
-    df_sample_features_missed['ppm'] = df_sample_features_missed.apply(
-        lambda x: mass_tolerance_error(x.feature_target, x.sample_missed), axis=1)
-    output1 = build_table(df_mass_ppm, 'blue_light', index=True)
-    output2 = build_table(df_sample_features_missed, 'blue_light', index=True)
-    output_miss = f'<p><b>{sample_file} : found peaks</b></p>{output1}</p><p><b>{sample_file} : missing peaks</b></p>{output2}</p>'
-    return df_sample, output_miss
-
-
-def calculate_missing_percentage(df_sample, features, min_peak_height, classes_mass_lists):
-    missing_percent_msg = '<p>'
-    classes_mass_lists['all'] = features
-    for compare_list in classes_mass_lists:
-        list2 = list(map(str, classes_mass_lists[compare_list]))
-        res = len(set(df_sample.columns.tolist()) & set(list2)) / float(
-            len(set(df_sample.columns.tolist()) | set(list2))) * 100
-        ans = f'Percentage missing of {compare_list} is: ' + str(100 - res)
-        missing_percent_msg += f'{ans}<br>'
-    missing_percent = 0
-    for col in features:
-        if col not in df_sample:
-            df_sample[col] = float(min_peak_height)
-            missing_percent += 1
-    missing_percent = (missing_percent / len(features)) * 100
-    missing_percent = "{:.2f}".format(missing_percent)
-    missing_percent_msg += f' total missing is {missing_percent}</p>'
-    return df_sample, missing_percent_msg
-
-
-def align_peaks_with_features(df_sample, features, sample_file, min_peak_height):
+def align_peaks_with_features(df_sample, features, sample_file, min_peak_height, output_dir):
     """
     Align sample peaks (df_sample) with reference features, ensuring that:
     - A new DataFrame is created with all features from the reference list.
@@ -92,6 +51,7 @@ def align_peaks_with_features(df_sample, features, sample_file, min_peak_height)
 
     # Track unused peaks from the sample
     unused_peaks = set(mass_sample_list)
+    all_peaks = []
 
     # Iterate over the reference features and match to peaks in df_sample within PPM tolerance
     for feature in mass_feature_lst:
@@ -102,15 +62,25 @@ def align_peaks_with_features(df_sample, features, sample_file, min_peak_height)
 
         # If the sample peak is within the mass tolerance, use its intensity
         if diff < mass_tolerance(feature):
-            df_aligned[feature] = df_sample[mass_sample].values  # Use sample intensity
+            peak_height = df_sample[mass_sample].values[0]  # Get the peak height
+            df_aligned[feature] = peak_height  # Use sample intensity
             unused_peaks.discard(mass_sample)  # This peak has been used
+            ppm_error = mass_tolerance_error(feature, mass_sample)
+            all_peaks.append({'feature': feature, 'sample': mass_sample, 'ppm_error': ppm_error, 'status': 'found', 'peak_height': peak_height})
+        else:
+            all_peaks.append({'feature': feature, 'sample': 'N/A', 'ppm_error': 'N/A', 'status': 'missing', 'peak_height': min_peak_height})
 
-    # Create output for any unused peaks in the sample
-    output_miss = f"<p><b>{sample_file}: unused peaks</b></p>"
-    output_miss += ', '.join([str(m) for m in unused_peaks])  # Log unused peaks
+    # Add unused peaks to the all_peaks list, indicating they are in the original sample but missing from the features
+    for peak in unused_peaks:
+        peak_height = df_sample[peak].values[0]  # Get the peak height
+        all_peaks.append({'feature': 'N/A', 'sample': peak, 'ppm_error': 'N/A', 'status': 'in_sample_not_in_features', 'peak_height': peak_height})
+
+    # Save all peaks to a CSV file
+    all_peaks_df = pd.DataFrame(all_peaks)
+    all_peaks_df.to_csv(f"{output_dir}_debug_peaks.csv", index=False)
 
     # Return the DataFrame with aligned features, and ensure it's in the correct shape
-    return df_aligned, output_miss
+    return df_aligned
 
 def default_loader(path):
     return joblib.load(path)
@@ -175,42 +145,63 @@ def load_data_frame(input_dataframe):
     encoder = OneHotEncoder(sparse_output=False)
     oil_y_num = encoder.fit_transform(labels.to_numpy().reshape(-1, 1))
     y = np.argmax(oil_y_num, axis=1)
+    X = pd.DataFrame(data_table, columns=features)
+    min_peak_height = min(X.min())
     ms_info = {
         'class_names': class_names,
         'labels': labels,
-        'X': pd.DataFrame(data_table, columns=features),
+        'X': X,
         'y': y,
         'samples': samples,
         'features': [float(i) for i in features],
-        'feature_names': features
+        'feature_names': features,
+        'min_peak_height' :  min_peak_height
     }
     return ms_info
 
-
-def make_predictions_from_files(directory_path, features, loaded_models, min_peak_height, classes_mass_lists):
+def make_predictions_from_files(directory_path, root_dir, features, loaded_models, min_peak_height, classes_mass_lists):
     list_sample_files = get_files_from_directory(directory_path, extension=".csv")
     debug_dataframes = {}
     single_prediction_info = {}
     single_prediction_table = {}
     sample_updated_dataframe = {}
     missing_percent_msg = ""
+    data_type = os.path.basename(root_dir)
+    # Extract the directory and the file name
+    dir_name = os.path.dirname(list_sample_files[0])
+    # Add the 'debug' directory before the file name and append the data_type
+    new_debug_dir = os.path.join(dir_name, 'debug', data_type)
+
+    # Remove the directory if it exists
+    if os.path.exists(new_debug_dir):
+        shutil.rmtree(new_debug_dir)
+
+    # Create the directory again
+    os.makedirs(new_debug_dir)
 
     if len(list_sample_files) != 0:
         for sample_file in list_sample_files:
+            file_name = os.path.basename(sample_file)
+            # Combine the new directory with the file name
+            debug_file_path = os.path.join(new_debug_dir, file_name)
+
+            print(f"Updated file path: {debug_file_path}")
+
             # Step 1: Read and transpose the sample data
             df_sample = pd.read_csv(sample_file).T
             df_sample.columns = df_sample.iloc[0]
             df_sample = df_sample.drop(df_sample.index[0])
 
             # Step 2: Align the sample peaks with features
-            df_sample, output_miss = align_peaks_with_features(df_sample, features, sample_file, min_peak_height)
-            debug_dataframes[sample_file] = output_miss
+            df_sample = align_peaks_with_features(df_sample, features, sample_file, min_peak_height, f'{debug_file_path}')
 
-            # Step 3: Calculate missing percentage
-            df_sample, missing_percent_msg = calculate_missing_percentage(df_sample, features, min_peak_height,
-                                                                          classes_mass_lists)
             sample_updated_dataframe[sample_file] = df_sample
-            df_sample.columns = df_sample.columns.astype(str)
+
+            df_sample.columns = [
+                f"{col:.2f}" if isinstance(col, (int, float)) else str(col)
+                for col in df_sample.columns
+            ]
+            # df_sample.columns = df_sample.columns.astype(str)
 
             # Step 4: Perform machine learning predictions
             prediction_results = {}
@@ -250,9 +241,8 @@ def make_predictions_from_files(directory_path, features, loaded_models, min_pea
     )
 
 
-def main(root_directory="./oil/Adulteration_can", sample_directory="./20230502/Muldi",
-         training_data_file="./oil/Adulteration_can/Adult_CAN-MALDI_TAG_unnorm_8Sep2024.csv", flip=False,
-         output_file="prediction_results.csv"):
+def main(root_directory, sample_directory,
+         training_data_file, flip, output_file):
     print(f"Loading models from directory: {root_directory}")
     loaded_models = load_models(root_directory)
 
@@ -265,7 +255,7 @@ def main(root_directory="./oil/Adulteration_can", sample_directory="./20230502/M
         training_data = load_data_from_file(training_data_file, flip)
         ms_info = load_data_frame(training_data)
         features = ms_info['features']
-        min_peak_height = 0.01  # Example value, define as needed
+        min_peak_height = ms_info['min_peak_height']  # Example value, define as needed
         classes_mass_lists = {}  # Example value, define as needed
 
         # Collect predictions for each model and each sample
@@ -273,7 +263,7 @@ def main(root_directory="./oil/Adulteration_can", sample_directory="./20230502/M
 
         # Make predictions for each sample in the directory
         single_prediction_info, single_prediction_table, features, sample_updated_dataframe, debug_dataframes, missing_percent_msg = make_predictions_from_files(
-            sample_directory, features, loaded_models, min_peak_height, classes_mass_lists
+            sample_directory, root_directory, features, loaded_models, min_peak_height, classes_mass_lists
         )
 
         # Loop through each sample file and model, and collect the results
@@ -302,5 +292,33 @@ def main(root_directory="./oil/Adulteration_can", sample_directory="./20230502/M
         print("No training data file provided.")
 
 
+def run_multiple_main_calls():
+    # Arrays of values for each argument
+    # root_directories = ["./oil/Adulteration_can", "./oil/Adulteration_soy" ,"./oil/Freshness", "./oil/Grade"]
+    # sample_directories = ["./20230502/Muldi", "./20230502/Muldi",  "./20230502/Dart",  "./20230502/Dart"]
+    """training_data_files = [
+        "./oil/Adulteration_can/Adult_CAN-MALDI_TAG_unnorm_8Sep2024.csv",
+        "./oil/Adulteration_soy/Adult_SOY-MALDI_TAG_unnorm_8Sep2024.csv",
+        "./oil/Freshness/Freshness_PP_filt_unnorm_9Sep2024.csv",
+        "./oil/Grade/Grade_PP_filt_unnorm_9Sep2024.csv"
+    ]"""
+    # output_files = ["prediction_results_can.csv", "prediction_results_soy.csv", "prediction_results_fresh.csv","prediction_results_grade.csv"]
+
+    root_directories = [ "./oil/Grade"]
+    sample_directories = ["./20230502/Dart"]
+    training_data_files = ["./oil/Grade/Grade_PP_filt_unnorm_9Sep2024.csv"]
+    output_files = ["prediction_results_grade.csv"]
+
+    # Loop over each set of directories and files, and call main()
+    for root_dir, sample_dir, training_data, output_file in zip(
+            root_directories, sample_directories, training_data_files, output_files):
+
+        print(f"Running main with root_directory={root_dir}, sample_directory={sample_dir}")
+        main(root_directory=root_dir,
+             sample_directory=sample_dir,
+             training_data_file=training_data,
+             flip=False,
+             output_file=output_file)
+
 if __name__ == "__main__":
-    main()
+    run_multiple_main_calls()
