@@ -6,6 +6,9 @@ import pandas as pd
 import tensorflow as tf
 from pretty_html_table import build_table
 from sklearn.preprocessing import OneHotEncoder
+import shap  # Ensure you have SHAP installed
+import matplotlib.pyplot as plt
+
 
 PPM_ERROR = 1000  # Parts per million error for mass tolerance
 
@@ -23,7 +26,7 @@ def build_missing_df(sample_mass, features_mass):
     missing.sort()
     return pd.DataFrame({'mass': missing}).fillna(0).reset_index(drop=True)
 
-def align_peaks_with_features(df_sample, features, sample_file, min_peak_height, output_dir):
+def align_peaks_with_features(df_sample, features_names, min_peak_height, output_dir):
     """
     Align sample peaks (df_sample) with reference features, ensuring that:
     - A new DataFrame is created with all features from the reference list.
@@ -42,12 +45,13 @@ def align_peaks_with_features(df_sample, features, sample_file, min_peak_height,
     - output_miss: Debugging output indicating unused peaks in the sample.
     """
 
-    # Initialize a DataFrame with the reference features and set all intensities to min_peak_height
-    df_aligned = pd.DataFrame(min_peak_height, index=[0], columns=features)
-
     # Convert features and sample columns to numpy arrays for easy matching
-    mass_feature_lst = np.asarray(features).astype(float)
+    mass_feature_lst = np.asarray(features_names).astype(float)
     mass_sample_list = df_sample.columns.astype(float)
+
+    # Initialize a DataFrame with the reference features and set all intensities to min_peak_height
+    df_aligned = pd.DataFrame(min_peak_height, index=[0], columns=mass_feature_lst)
+
 
     # Track unused peaks from the sample
     unused_peaks = set(mass_sample_list)
@@ -80,6 +84,7 @@ def align_peaks_with_features(df_sample, features, sample_file, min_peak_height,
     all_peaks_df.to_csv(f"{output_dir}_debug_peaks.csv", index=False)
 
     # Return the DataFrame with aligned features, and ensure it's in the correct shape
+    df_aligned.columns = features_names
     return df_aligned
 
 def default_loader(path):
@@ -159,13 +164,12 @@ def load_data_frame(input_dataframe):
     }
     return ms_info
 
-def make_predictions_from_files(directory_path, root_dir, features, loaded_models, min_peak_height, classes_mass_lists):
+def make_predictions_from_files(directory_path, root_dir, features, loaded_models, min_peak_height):
     list_sample_files = get_files_from_directory(directory_path, extension=".csv")
-    debug_dataframes = {}
+
     single_prediction_info = {}
     single_prediction_table = {}
     sample_updated_dataframe = {}
-    missing_percent_msg = ""
     data_type = os.path.basename(root_dir)
     # Extract the directory and the file name
     dir_name = os.path.dirname(list_sample_files[0])
@@ -179,65 +183,65 @@ def make_predictions_from_files(directory_path, root_dir, features, loaded_model
     # Create the directory again
     os.makedirs(new_debug_dir)
 
-    if len(list_sample_files) != 0:
-        for sample_file in list_sample_files:
-            file_name = os.path.basename(sample_file)
-            # Combine the new directory with the file name
-            debug_file_path = os.path.join(new_debug_dir, file_name)
 
-            print(f"Updated file path: {debug_file_path}")
+    for sample_file in list_sample_files:
+        file_name = os.path.basename(sample_file)
+        # Combine the new directory with the file name
+        debug_file_path = os.path.join(new_debug_dir, file_name)
 
-            # Step 1: Read and transpose the sample data
-            df_sample = pd.read_csv(sample_file).T
-            df_sample.columns = df_sample.iloc[0]
-            df_sample = df_sample.drop(df_sample.index[0])
+        print(f"Updated file path: {debug_file_path}")
 
-            # Step 2: Align the sample peaks with features
-            df_sample = align_peaks_with_features(df_sample, features, sample_file, min_peak_height, f'{debug_file_path}')
+        # Step 1: Read and transpose the sample data
+        df_sample = pd.read_csv(sample_file).T
+        df_sample.columns = df_sample.iloc[0]
+        df_sample = df_sample.drop(df_sample.index[0])
 
-            sample_updated_dataframe[sample_file] = df_sample
+        # Step 2: Align the sample peaks with features
+        df_sample = align_peaks_with_features(df_sample, features, min_peak_height, f'{debug_file_path}')
 
-            df_sample.columns = [
-                f"{col:.2f}" if isinstance(col, (int, float)) else str(col)
-                for col in df_sample.columns
-            ]
-            # df_sample.columns = df_sample.columns.astype(str)
+        sample_updated_dataframe[sample_file] = df_sample
 
-            # Step 4: Perform machine learning predictions
-            prediction_results = {}
-            probability_results = {}
+        # Step 4: Perform machine learning predictions and SHAP analysis
+        prediction_results = {}
+        probability_results = {}
 
-            for model_name, model in loaded_models.items():
-                try:
-                    predictions = model.predict(df_sample)
-                    if hasattr(model, 'predict_proba'):
-                        probabilities = model.predict_proba(df_sample)
-                    else:
-                        probabilities = None
+        for model_name, model in loaded_models.items():
+            try:
+                predictions = model.predict(df_sample)
+                if hasattr(model, 'predict_proba'):
+                    probabilities = model.predict_proba(df_sample)
+                else:
+                    probabilities = None
 
-                    prediction_results[model_name] = predictions
-                    probability_results[model_name] = probabilities if probabilities is not None else "Not available"
+                prediction_results[model_name] = predictions
+                probability_results[model_name] = probabilities if probabilities is not None else "Not available"
 
-                    print(f"Predictions for {sample_file} using {model_name}: {predictions}")
-                    single_prediction_info[sample_file] = f"Predictions using {model_name}: {predictions}"
-                    single_prediction_table[sample_file] = build_table(pd.DataFrame(predictions), 'blue_light')
-                except Exception as e:
-                    print(f"Error making predictions with {model_name} on {sample_file}: {e}")
-                    prediction_results[model_name] = f"Error with {model_name}: {e}"
-                    probability_results[model_name] = "Error"
+                print(f"Predictions for {sample_file} using {model_name}: {predictions}")
+                # Print table in a readable format
+                # SHAP analysis
+                explainer = shap.Explainer(model, df_sample)  # Create SHAP explainer
+                shap_values = explainer(df_sample)  # Calculate SHAP values
 
-            single_prediction_info[sample_file] = {"predictions": prediction_results,
-                                                   "probabilities": probability_results}
-    else:
-        missing_percent_msg = "No samples"
+                # Save SHAP plot in the debug directory
+                shap_plot_path = os.path.join(new_debug_dir, f"shap_plot_{file_name}_{model_name}.png")
+                plt.figure()
+                shap.summary_plot(shap_values, df_sample, show=False)  # Generate SHAP summary plot
+                plt.savefig(shap_plot_path)  # Save the plot
+                plt.close()
+
+            except Exception as e:
+                print(f"Error making predictions with {model_name} on {sample_file}: {e}")
+                prediction_results[model_name] = f"Error with {model_name}: {e}"
+                probability_results[model_name] = "Error"
+
+        single_prediction_info[sample_file] = {"predictions": prediction_results,
+                                               "probabilities": probability_results}
+
 
     return (
         single_prediction_info,
         single_prediction_table,
-        features,
-        sample_updated_dataframe,
-        debug_dataframes,
-        missing_percent_msg
+        sample_updated_dataframe
     )
 
 
@@ -254,17 +258,15 @@ def main(root_directory, sample_directory,
     if training_data_file:
         training_data = load_data_from_file(training_data_file, flip)
         ms_info = load_data_frame(training_data)
-        features = ms_info['features']
+        features = ms_info['feature_names']
         min_peak_height = ms_info['min_peak_height']  # Example value, define as needed
-        classes_mass_lists = {}  # Example value, define as needed
 
         # Collect predictions for each model and each sample
         results = []
 
         # Make predictions for each sample in the directory
-        single_prediction_info, single_prediction_table, features, sample_updated_dataframe, debug_dataframes, missing_percent_msg = make_predictions_from_files(
-            sample_directory, root_directory, features, loaded_models, min_peak_height, classes_mass_lists
-        )
+        single_prediction_info, single_prediction_table, sample_updated_dataframe = make_predictions_from_files(
+            sample_directory, root_directory, features, loaded_models, min_peak_height)
 
         # Loop through each sample file and model, and collect the results
         for sample_file, prediction_info in single_prediction_info.items():
@@ -294,20 +296,23 @@ def main(root_directory, sample_directory,
 
 def run_multiple_main_calls():
     # Arrays of values for each argument
-    # root_directories = ["./oil/Adulteration_can", "./oil/Adulteration_soy" ,"./oil/Freshness", "./oil/Grade"]
-    # sample_directories = ["./20230502/Muldi", "./20230502/Muldi",  "./20230502/Dart",  "./20230502/Dart"]
-    """training_data_files = [
-        "./oil/Adulteration_can/Adult_CAN-MALDI_TAG_unnorm_8Sep2024.csv",
-        "./oil/Adulteration_soy/Adult_SOY-MALDI_TAG_unnorm_8Sep2024.csv",
+    root_directories = ["./20230502/saved/oil/Adulteration_can",
+                        "./20230502/saved/oil/Adulteration_soy",
+                        "./20230502/saved/oil/Freshness",
+                        "./20230502/saved/oil/Grade"]
+    sample_directories = ["./20230502/Muldi", "./20230502/Muldi",  "./20230502/Dart",  "./20230502/Dart"]
+    training_data_files = [
+        "./oil/Adulteration_can/Adult_CAN-MALDI_TAG_unnorm_8Oct2024.csv",
+        "./oil/Adulteration_soy/Adult_SOY-MALDI_TAG_unnorm_8Oct2024.csv",
         "./oil/Freshness/Freshness_PP_filt_unnorm_9Sep2024.csv",
         "./oil/Grade/Grade_PP_filt_unnorm_9Sep2024.csv"
-    ]"""
-    # output_files = ["prediction_results_can.csv", "prediction_results_soy.csv", "prediction_results_fresh.csv","prediction_results_grade.csv"]
+    ]
+    output_files = ["prediction_results_can.csv", "prediction_results_soy.csv", "prediction_results_fresh.csv","prediction_results_grade.csv"]
 
-    root_directories = [ "./oil/Grade"]
+    """root_directories = [ "./oil/Grade"]
     sample_directories = ["./20230502/Dart"]
     training_data_files = ["./oil/Grade/Grade_PP_filt_unnorm_9Sep2024.csv"]
-    output_files = ["prediction_results_grade.csv"]
+    output_files = ["prediction_results_grade.csv"]"""
 
     # Loop over each set of directories and files, and call main()
     for root_dir, sample_dir, training_data, output_file in zip(
