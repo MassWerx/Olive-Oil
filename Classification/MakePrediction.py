@@ -5,6 +5,8 @@ import numpy as np
 import pandas as pd
 import tensorflow as tf
 from pretty_html_table import build_table
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier
+from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import OneHotEncoder
 import shap  # Ensure you have SHAP installed
 import matplotlib.pyplot as plt
@@ -164,6 +166,85 @@ def load_data_frame(input_dataframe):
     }
     return ms_info
 
+
+def run_shap_analysis(loaded_models, sample_updated_dataframe, new_debug_dir):
+    """
+    This method isolates SHAP analysis, taking preprocessed data and models to perform SHAP analysis
+    and save SHAP summary plots.
+
+    Parameters:
+    - loaded_models: Dictionary of loaded models (pipelines).
+    - sample_updated_dataframe: Dictionary of preprocessed DataFrames (aligned and ready for SHAP).
+    - new_debug_dir: Directory where SHAP plots will be saved.
+    """
+
+    # Create a subdirectory for SHAP plots
+    shap_dir = os.path.join(new_debug_dir, 'SHAP')
+
+    # Check if the SHAP directory exists, if not, create it
+    if not os.path.exists(shap_dir):
+        os.makedirs(shap_dir)
+
+    for sample_file, df_sample in sample_updated_dataframe.items():
+        file_name = os.path.basename(sample_file)
+
+        for model_name, model in loaded_models.items():
+            try:
+                # Copy the original data (before transformation)
+                preprocessed_sample = df_sample.copy()
+
+                # Step 1: Apply normalization
+                if 'normalize' in model.named_steps:
+                    preprocessed_sample = model.named_steps['normalize'].transform(preprocessed_sample)
+                    print("After normalization:", preprocessed_sample.shape)
+
+                # Step 2: Apply scaling
+                if 'scaler' in model.named_steps:
+                    preprocessed_sample = model.named_steps['scaler'].transform(preprocessed_sample)
+                    print("After scaling:", preprocessed_sample.shape)
+
+                # Step 3: Apply feature reduction (e.g., BorutaPy)
+                if 'Reduction' in model.named_steps:
+                    preprocessed_sample = model.named_steps['Reduction'].transform(preprocessed_sample)
+
+                    # Get selected features after reduction (assuming BorutaPy or similar method)
+                    if hasattr(model.named_steps['Reduction'], 'support_'):
+                        selected_feature_names = df_sample.columns[model.named_steps['Reduction'].support_]
+                        preprocessed_sample = pd.DataFrame(preprocessed_sample, columns=selected_feature_names)
+                    else:
+                        # In case Reduction doesn't expose `support_`, you can just wrap the array in a DataFrame
+                        preprocessed_sample = pd.DataFrame(preprocessed_sample)
+
+                    print(f' After reduction:\n{preprocessed_sample} , \nwith shap {preprocessed_sample.shape}')
+                # At this point, `preprocessed_sample` has updated feature names based on reduction
+
+                # Extract the classifier from the pipeline
+                classifier = model.named_steps['classifier']
+
+                # Create SHAP explainer based on the classifier type
+                if isinstance(classifier, (RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier)):
+                    explainer = shap.TreeExplainer(classifier)
+                elif isinstance(classifier, LogisticRegression):
+                    explainer = shap.LinearExplainer(classifier, preprocessed_sample)
+                else:
+                    explainer = shap.KernelExplainer(classifier.predict, preprocessed_sample)
+
+                # Calculate SHAP values
+                shap_values = explainer.shap_values(preprocessed_sample)
+
+                # Save SHAP summary plot in the debug directory
+                shap_plot_path = os.path.join(shap_dir, f"shap_plot_{file_name}_{model_name}.png")
+                plt.figure()
+                shap.summary_plot(shap_values, preprocessed_sample, show=False)
+                plt.savefig(shap_plot_path)
+                plt.close()
+
+                print(f"SHAP plot saved for {model_name} on {sample_file}")
+
+            except Exception as e:
+                print(f"Error with SHAP analysis for {model_name} on {sample_file}: {e}")
+
+
 def make_predictions_from_files(directory_path, root_dir, features, loaded_models, min_peak_height):
     list_sample_files = get_files_from_directory(directory_path, extension=".csv")
 
@@ -217,17 +298,6 @@ def make_predictions_from_files(directory_path, root_dir, features, loaded_model
                 probability_results[model_name] = probabilities if probabilities is not None else "Not available"
 
                 print(f"Predictions for {sample_file} using {model_name}: {predictions}")
-                # Print table in a readable format
-                # SHAP analysis
-                explainer = shap.Explainer(model, df_sample)  # Create SHAP explainer
-                shap_values = explainer(df_sample)  # Calculate SHAP values
-
-                # Save SHAP plot in the debug directory
-                shap_plot_path = os.path.join(new_debug_dir, f"shap_plot_{file_name}_{model_name}.png")
-                plt.figure()
-                shap.summary_plot(shap_values, df_sample, show=False)  # Generate SHAP summary plot
-                plt.savefig(shap_plot_path)  # Save the plot
-                plt.close()
 
             except Exception as e:
                 print(f"Error making predictions with {model_name} on {sample_file}: {e}")
@@ -237,6 +307,7 @@ def make_predictions_from_files(directory_path, root_dir, features, loaded_model
         single_prediction_info[sample_file] = {"predictions": prediction_results,
                                                "probabilities": probability_results}
 
+    run_shap_analysis(loaded_models, sample_updated_dataframe, new_debug_dir)
 
     return (
         single_prediction_info,
@@ -296,10 +367,11 @@ def main(root_directory, sample_directory,
 
 def run_multiple_main_calls():
     # Arrays of values for each argument
-    root_directories = ["./20230502/saved/oil/Adulteration_can",
-                        "./20230502/saved/oil/Adulteration_soy",
-                        "./20230502/saved/oil/Freshness",
-                        "./20230502/saved/oil/Grade"]
+
+    root_directories = ["./oil/Adulteration_can",
+                        "./oil/Adulteration_soy",
+                        "./oil/Freshness",
+                        "./oil/Grade"]
     sample_directories = ["./20230502/Muldi", "./20230502/Muldi",  "./20230502/Dart",  "./20230502/Dart"]
     training_data_files = [
         "./oil/Adulteration_can/Adult_CAN-MALDI_TAG_unnorm_8Oct2024.csv",
@@ -313,6 +385,11 @@ def run_multiple_main_calls():
     sample_directories = ["./20230502/Dart"]
     training_data_files = ["./oil/Grade/Grade_PP_filt_unnorm_9Sep2024.csv"]
     output_files = ["prediction_results_grade.csv"]"""
+
+    root_directories_saved = ["./20230502/saved/oil/Adulteration_can",
+                        "./20230502/saved/oil/Adulteration_soy",
+                        "./20230502/saved/oil/Freshness",
+                        "./20230502/saved/oil/Grade"]
 
     # Loop over each set of directories and files, and call main()
     for root_dir, sample_dir, training_data, output_file in zip(
