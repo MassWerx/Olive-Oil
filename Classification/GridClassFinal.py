@@ -10,6 +10,7 @@ import shap
 import pickle
 
 from scikeras.wrappers import KerasClassifier
+from sklearn.base import BaseEstimator, ClassifierMixin
 from sklearn.linear_model import LogisticRegression
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import StandardScaler, OneHotEncoder, FunctionTransformer, Normalizer
@@ -64,6 +65,28 @@ current_working_dir = os.getcwd()
 
 
 def create_zip_file_output(output_file_name, base_dir):
+    """
+    Function: create_zip_file_output
+    ---------------------------------
+    Creates a zip file containing all files from a specified directory.
+
+    This function compresses all files within the given base directory (including files in subdirectories)
+    into a zip file. The resulting zip file will be saved with the provided output file name.
+
+    Parameters:
+    -----------
+    output_file_name : str
+        The name of the output zip file (without the '.zip' extension).
+
+    base_dir : str
+        The base directory from which all files will be added to the zip file.
+
+    Returns:
+    --------
+    None
+        The function does not return any value, but a zip file is created in the current directory.
+    """
+
     with ZipFile(f'{output_file_name}.zip', 'w') as zipObj:
         for folderName, subfolders, filenames in os.walk(base_dir):
             for filename in filenames:
@@ -72,6 +95,29 @@ def create_zip_file_output(output_file_name, base_dir):
 
 
 def get_feature_reduction(feature_reduce_choice):
+    """
+    Function: get_feature_reduction
+    --------------------------------
+    Returns a feature reduction method based on the user's choice.
+
+    This function returns a specific feature reduction function or technique based on the
+    provided `feature_reduce_choice`. Currently, it supports 'Boruta' for feature selection
+    or skips feature reduction if no valid choice is provided.
+
+    Parameters:
+    -----------
+    feature_reduce_choice : str or None
+        The chosen feature reduction method. Accepted values:
+        - None: No feature reduction.
+        - 'Boruta': Applies the Boruta feature selection method using a RandomForestClassifier.
+
+    Returns:
+    --------
+    reduction_fun : callable or None
+        The feature reduction function corresponding to the selected method, or None if no reduction
+        method is chosen.
+    """
+
     reduction_fun = None
     match feature_reduce_choice:
         case None:
@@ -89,29 +135,29 @@ def get_feature_reduction(feature_reduce_choice):
             quit()
     return reduction_fun
 
-"""
-Function: load_data_from_file
------------------------------
-This function loads data from a CSV file into a pandas DataFrame, with an option to flip (transpose) the DataFrame.
-If `flip` is True, the DataFrame is transposed, the first row is set as the header, and the first row is removed. 
-Otherwise, the file is read with the first row as the header.
-
-Parameters:
------------
-input_file : str
-    The file path of the CSV file to load.
-
-flip : bool
-    If True, the DataFrame will be transposed (rows become columns and vice versa).
-
-Returns:
---------
-pd.DataFrame
-    A pandas DataFrame containing the loaded data.
-"""
-
-
 def load_data_from_file(input_file, flip):
+    """
+    Load data from a CSV file into a pandas DataFrame, with an option to transpose the data.
+
+    This function reads data from a CSV file and stores it in a pandas DataFrame. If the `flip` parameter is set to
+    True, the data is transposed (i.e., rows become columns and columns become rows), the first transposed row is
+    used as the new header, and this row is then removed from the DataFrame. If `flip` is False, the file is read
+    with the first row as the header.
+
+    Parameters:
+    -----------
+    input_file : str
+        The file path of the CSV file to load.
+
+    flip : bool
+        If True, the DataFrame will be transposed. The first row will be set as the header and then removed.
+        If False, the CSV will be read with the first row as the header.
+
+    Returns:
+    --------
+    pd.DataFrame
+        A pandas DataFrame containing the loaded data, with or without transposition based on the `flip` parameter.
+    """
     if flip:
         df = pd.read_csv(input_file, header=None).T
         df = df.rename(columns=df.iloc[0]).drop(df.index[0])
@@ -120,33 +166,33 @@ def load_data_from_file(input_file, flip):
     return df
 
 
-"""
-Function: load_data_frame
--------------------------
-This function processes an input pandas DataFrame to extract sample names, labels, and feature data. It also 
-converts categorical labels into a one-hot encoded format and computes the target labels as integers. The processed 
-data, along with class names and feature names, is organized into a dictionary for further use in machine learning 
-tasks.
-
-Parameters:
------------
-input_dataframe : pd.DataFrame
-    A pandas DataFrame containing the dataset. The first column represents the sample names, the second column 
-    contains the labels, and the remaining columns are the features.
-
-Returns:
---------
-dict
-    A dictionary (ms_info) containing the following keys:
-    - 'class_names': List of unique class names from the labels.
-    - 'labels': The original labels as extracted from the input DataFrame.
-    - 'X': The features DataFrame.
-    - 'y': The numeric labels corresponding to the one-hot encoded classes.
-    - 'samples': The sample names.
-    - 'features': List of feature names.
-    - 'feature_names': List of feature names (identical to 'features').
-"""
 def load_data_frame(input_dataframe):
+    """
+    Process a pandas DataFrame to extract and organize sample names, labels, features, and numeric targets.
+
+    This function extracts sample names, categorical labels, and feature data from an input pandas DataFrame.
+    It also converts the categorical labels into one-hot encoded format and computes numeric target labels.
+    The processed data, including the class names and feature names, is returned as a dictionary for further use
+    in machine learning tasks.
+
+    Parameters:
+    -----------
+    input_dataframe : pd.DataFrame
+        A pandas DataFrame containing the dataset. The first column contains the sample names, the second column
+        contains the labels, and the remaining columns contain the feature data.
+
+    Returns:
+    --------
+    dict
+        A dictionary (ms_info) containing:
+        - 'class_names': List of unique class names extracted from the labels.
+        - 'labels': The original labels as extracted from the input DataFrame.
+        - 'X': The features DataFrame (extracted from the input DataFrame).
+        - 'y': Numeric target labels corresponding to the one-hot encoded classes.
+        - 'samples': The sample names.
+        - 'features': List of feature names.
+        - 'feature_names': List of feature names (identical to 'features').
+    """
     # Extract samples, labels, and features
     samples = input_dataframe.iloc[:, 0]
     labels = input_dataframe.iloc[:, 1]
@@ -174,8 +220,12 @@ def load_data_frame(input_dataframe):
     }
     return ms_info
 
+    # Set random seeds for reproducibility
 
-def build_tf_model(n_features, n_classes, seed):
+
+
+
+def build_tf_model(n_features, n_classes, seed, n_neurons):
     """Create and return a TensorFlow model for classification.
 
     This function sets various random seeds to ensure reproducibility across
@@ -191,130 +241,190 @@ def build_tf_model(n_features, n_classes, seed):
     Returns:
         tf.keras.Model: Compiled TensorFlow model ready for training.
     """
+    """ Create a TF Model
+  Args:
+    Xn (Pandas dataframe):  features after elimiination
+    n_classes () : lables
+    seed (number) : remove random resaults
+  Attributes:
 
-    # Set random seeds for reproducibility
-    os.environ['PYTHONHASHSEED'] = str(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    tf.random.set_seed(seed)
+  Raises:
 
-    # Model parameters
+  Returns:
+    a TensorFlow Model
+  """
+
+    # Seed value
+    # Apparently you may use different seed values at each stage
+    seed_value = seed
+
+    # 1. Set `PYTHONHASHSEED` environment variable at a fixed value
+    os.environ['PYTHONHASHSEED'] = str(seed_value)
+
+    # 2. Set `python` built-in pseudo-random generator at a fixed value
+    random.seed(seed_value)
+
+    # 3. Set `numpy` pseudo-random generator at a fixed value
+    np.random.seed(seed_value)
+
+    # 4. Set the `tensorflow` pseudo-random generator at a fixed value
+    tf.random.set_seed(seed_value)
+    # for later versions:
+    # tf.compat.v1.set_random_seed(seed_value)
+
+    # 5. Configure a new global `tensorflow` session
+    """from keras import backend as K
+  session_conf = tf.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+  sess = tf.Session(graph=tf.get_default_graph(), config=session_conf)
+  K.set_session(sess)"""
+    # for later versions:
+    # session_conf = tf.compat.v1.ConfigProto(intra_op_parallelism_threads=1, inter_op_parallelism_threads=1)
+    # sess = tf.compat.v1.Session(graph=tf.compat.v1.get_default_graph(), config=session_conf)
+    # tf.compat.v1.keras.backend.set_session(sess)
+
     drop_out_seed = 0
-    TF_DROPOUT_RATE = 0.2
-    TF_EPOCHS = 220
-    TF_LEARN_RATE = 0.001
-    TF_NUM_OF_NEURONS = 40
 
-    # Define the TensorFlow model
+    # TensorFlow Paramaters
+    TF_DROPOUT_RATE = .2  # current from report .3
+    TF_EPOCHS = 220  # current from report 140
+    TF_LEARN_RATE = 0.001
+    TF_NUM_OF_NEURONS = n_neurons # 40  # current from report 32
+
     tf_model = tf.keras.models.Sequential([
         tf.keras.Input(shape=(n_features,)),
-        tf.keras.layers.Dense(TF_NUM_OF_NEURONS, activation='relu'),
-        tf.keras.layers.Dropout(TF_DROPOUT_RATE, seed=drop_out_seed),
-        tf.keras.layers.Dense(TF_NUM_OF_NEURONS, kernel_regularizer=tf.keras.regularizers.l2(0.001), activation='relu'),
-        tf.keras.layers.Dense(n_classes, activation='softmax')
-    ])
+        tf.keras.layers.Dense(TF_NUM_OF_NEURONS, activation=tf.nn.relu),  # input shape required train_x
+        tf.keras.layers.Dropout(TF_DROPOUT_RATE, noise_shape=None, seed=drop_out_seed),
+        tf.keras.layers.Dense(TF_NUM_OF_NEURONS, kernel_regularizer=tf.keras.regularizers.l2(0.001),
+                              activation=tf.nn.relu),
+        tf.keras.layers.Dense(n_classes, activation='softmax')])
 
-    # Learning rate schedule
-    lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(
-        TF_LEARN_RATE,
-        decay_steps=2,  # Adjust based on training data size
-        decay_rate=1,
-        staircase=False
-    )
+    lr_schedule = tf.keras.optimizers.schedules.InverseTimeDecay(TF_LEARN_RATE,
+                                                                 decay_steps=2,  # 1, #2, # train_x.size * 1000,
+                                                                 decay_rate=1,  # .5, #1,
+                                                                 staircase=False)
 
-    # Compile the model
-    tf_optimizer = tf.keras.optimizers.Adam(learning_rate=lr_schedule)
+    tf_optimizer = tf.keras.optimizers.Adam()  # lr_schedule)
+
     tf_model.compile(optimizer=tf_optimizer,
+                     # loss='categorical_crossentropy',
                      loss='sparse_categorical_crossentropy',
                      metrics=['acc'])
 
     return tf_model
 
+# class MyKerasClf:
+"""
+Custom Keras Classifier wrapper to be compatible with scikit-learn's API.
 
-class MyKerasClf:
+Args:
+    n_classes (int): The number of output classes for classification.
+    seed (int): Seed value for controlling randomization in the model.
+
+Attributes:
+    n_classes (int): The number of output classes.
+    seed (int): Seed value for controlling randomization.
+    clf (KerasClassifier): The Keras classifier model.
+
+Methods:
+    predict(X):
+        Predict the class labels for the given input data.
+    create_model(learn_rate=0.01, weight_constraint=0):
+        Creates the Keras model with the specified parameters.
+    fit(X, y, **kwargs):
+        Fit the model to the given input data and labels.
+    predict_proba(X):
+        Predict class probabilities for the given input data.
+    get_params(deep=True):
+        Get parameters for this estimator.
+    set_params(**params):
+        Set the parameters of this estimator.
+"""
+class MyKerasClf(BaseEstimator, ClassifierMixin):
     """
-    Custom Keras Classifier wrapper to be compatible with scikit-learn's API.
+  Custom Keras Classifier.
 
-    Args:
-        n_classes (int): The number of output classes for classification.
-        seed (int): Seed value for controlling randomization in the model.
+  Args:
+      n_classes (int): The number of classes in the classification problem.
+      seed (int): The seed value for random number generation.
 
-    Attributes:
-        n_classes (int): The number of output classes.
-        seed (int): Seed value for controlling randomization.
-        clf (KerasClassifier): The Keras classifier model.
+  Attributes:
+      n_classes (int): The number of classes in the classification problem.
+      seed (int): The seed value for random number generation.
 
-    Methods:
-        predict(X):
-            Predict the class labels for the given input data.
-        create_model(learn_rate=0.01, weight_constraint=0):
-            Creates the Keras model with the specified parameters.
-        fit(X, y, **kwargs):
-            Fit the model to the given input data and labels.
-        predict_proba(X):
-            Predict class probabilities for the given input data.
-        get_params(deep=True):
-            Get parameters for this estimator.
-        set_params(**params):
-            Set the parameters of this estimator.
-    """
+  Methods:
+      predict(X):
+          Predicts the class labels for the given input data.
 
-    def __init__(self, n_classes, seed) -> None:
+      create_model(learn_rate=0.01, weight_constraint=0):
+          Creates a Keras model with the specified learning rate and weight constraint.
+
+      fit(X, y, **kwargs):
+          Fits the Keras model to the given input data and labels.
+
+      predict_proba(X):
+          Predicts class probabilities for the given input data.
+
+  """
+
+    def __init__(self, n_classes, seed, n_neurons=40) -> None:
+        super().__init__()
         self.n_classes = n_classes
         self.seed = seed
+        self.n_neurons = n_neurons
 
     def predict(self, X):
-        """Predict class labels for the input data."""
         y_pred_nn = self.clf.predict(X)
         return np.array(y_pred_nn).flatten()
 
-    def create_model(self, learn_rate=0.01, weight_constraint=0):
-        """Create a TensorFlow model with the specified learning rate and constraints."""
-        model = build_tf_model(self.input_shape, self.n_classes, self.seed)
+    def create_model(self, n_neurons):
+        model = build_tf_model(self.input_shape, self.n_classes, self.seed, n_neurons)
         return model
 
     def fit(self, X, y, **kwargs):
-        """Fit the Keras model to the input data."""
         self.input_shape = X.shape[1]
         self.classes_ = np.unique(y)
-        self.clf = KerasClassifier(model=self.create_model(), verbose=0, epochs=220, batch_size=100)
+        n_neurons = kwargs.get('n_neurons', self.n_neurons)
+        print(f"Fitting with parameters: n_neurons={n_neurons}")
+        self.clf = KerasClassifier(model=self.create_model(n_neurons=n_neurons),  verbose=0, epochs=220, batch_size=100)
+
         self.clf.fit(X, y, **kwargs)
 
     def predict_proba(self, X):
-        """Predict class probabilities for the input data."""
         return self.clf.predict_proba(X)
 
     def get_params(self, deep=True):
-        """Get parameters for this estimator."""
         return {"n_classes": self.n_classes, "seed": self.seed}
 
     def set_params(self, **params):
-        """Set the parameters of this estimator."""
         for key, value in params.items():
             setattr(self, key, value)
         return self
 
 
 
-"""
-Function: get_models(y)
-Purpose:
-    This function generates a list of machine learning models along with their respective hyperparameter grids
-    for use in model selection and hyperparameter tuning. The models include a variety of classifiers such as
-    SVM, AdaBoost, Logistic Regression, K-Nearest Neighbors, Gradient Boosting, Random Forest, and a custom 
-    Keras-based artificial neural network (ANN).
-
-Parameters:
-    y (array-like): Target labels from the dataset. Used to determine the number of classes in ANN.
-
-Returns:
-    list_of_models (list): A list of tuples, where each tuple contains:
-        - A string representing the model's name
-        - The classifier object
-        - A dictionary of hyperparameter grids for the classifier
-"""
-
 def get_models(y):
+    """
+    Generate a list of machine learning models and their hyperparameter grids for model selection and tuning.
+
+    This function returns a list of tuples, where each tuple consists of a machine learning model's name, the model
+    itself (as a scikit-learn estimator), and a dictionary of hyperparameter grids. The models include a variety of
+    classifiers such as Support Vector Machine (SVM), AdaBoost, Logistic Regression, K-Nearest Neighbors, Gradient
+    Boosting, Random Forest, and a custom Keras-based Artificial Neural Network (ANN). The number of classes in the
+    target labels `y` is used to determine the output layer size for the ANN.
+
+    Parameters:
+    -----------
+    y : array-like
+        Target labels from the dataset, used to determine the number of unique classes for the ANN model.
+
+    Returns:
+    --------
+    list_of_models : list
+        A list of tuples, where each tuple contains:
+        - A string representing the name of the model.
+        - The model as a classifier object.
+        - A dictionary of hyperparameter grids for the corresponding model.
+    """
     list_of_models = [
         # Support Vector Machine (SVM)
         ('SVM', SVC(probability=True, random_state=seed), {
@@ -357,66 +467,69 @@ def get_models(y):
             'classifier__min_samples_leaf': [1, 2, 4]
         }),
 
-        # Custom Keras Classifier (ANN)
+        # Custom Keras Classifier (ANN) please use the full search if you have time/resources
         ('ANN', MyKerasClf(n_classes=len(np.unique(y)), seed=seed), {
-            'classifier__learn_rate': [0.001, 0.01],
-            'classifier__weight_constraint': [0, 1]
+            'classifier__n_neurons': [30, 40, 50],  # Number of neurons in the dense layers
         })
+
     ]
 
+    """"
+    This can take way to long to run 
+    ('ANN', MyKerasClf(n_classes=len(np.unique(y)), seed=seed), {
+        'classifier__learn_rate': [0.001, 0.01, 0.1],  # Learning rates to try
+        'classifier__weight_constraint': [0, 1, 3, 5],  # Weight constraints
+        'classifier__n_neurons': [20, 40, 60],  # Number of neurons in the dense layers
+        'classifier__dropout_rate': [0.1, 0.2, 0.3, 0.5],  # Dropout rate for regularization
+        'classifier__epochs': [100, 150, 200, 250]  # Number of epochs to train the model
+    })"""
+
     # Example shortened list for testing purposes
-    test_list_of_models_short = [
+    """test_list_of_models_short = [
         ('LogisticRegression', LogisticRegression(max_iter=1000, random_state=seed), {
             'classifier__C': [0.1, 1, 10],
             'classifier__penalty': ['l2'],
             'classifier__solver': ['lbfgs']
         }),
-    ]
+    ]"""
+
 
     return list_of_models
 
-
-
-import pandas as pd
-import plotly.express as px
-from sklearn.model_selection import RepeatedStratifiedKFold
-from sklearn.metrics import roc_curve, auc
-
-"""
-Function: plot_roc
--------------------
-Generates and saves the ROC curve and AUC (Area Under Curve) for a given model pipeline using repeated 
-stratified k-fold cross-validation. The function collects ROC curve points, calculates the AUC, and saves 
-the ROC data and plot.
-
-Parameters:
------------
-ms_info : dict
-    Dictionary containing the feature matrix 'X', target labels 'y', and 'feature_names'.
-
-pipeline : Pipeline
-    A scikit-learn pipeline containing the model and preprocessing steps.
-
-model_name : str
-    Name of the model, used to save output files.
-
-output_dir : str
-    Directory where the ROC plot and data will be saved.
-
-n_splits : int, optional (default=5)
-    Number of folds for the k-fold cross-validation.
-
-n_repeats : int, optional (default=10)
-    Number of times the k-fold cross-validation is repeated.
-
-Returns:
---------
-roc_auc : float
-    The area under the ROC curve (AUC), rounded to 3 decimal places.
-"""
-
-
 def plot_roc(ms_info, pipeline, model_name, output_dir, n_splits=5, n_repeats=10):
+    """
+    Function: plot_roc
+    -------------------
+    Generates and saves the ROC curve and AUC (Area Under Curve) for a given model pipeline using repeated
+    stratified k-fold cross-validation. The function collects ROC curve points, calculates the AUC, and saves
+    the ROC data and plot in both CSV and image formats.
+
+    Parameters:
+    -----------
+    ms_info : dict
+        Dictionary containing the feature matrix 'X', target labels 'y', and 'feature_names'.
+
+    pipeline : Pipeline
+        A scikit-learn pipeline containing the model and preprocessing steps.
+
+    model_name : str
+        Name of the model, used to save output files.
+
+    output_dir : str
+        Directory where the ROC plot and data will be saved.
+
+    n_splits : int, optional (default=5)
+        Number of folds for the k-fold cross-validation.
+
+    n_repeats : int, optional (default=10)
+        Number of times the k-fold cross-validation is repeated.
+
+    Returns:
+    --------
+    roc_auc : float
+        The area under the ROC curve (AUC), rounded to 3 decimal places.
+    """
+
     # Extract feature matrix, target labels, and feature names from ms_info
     X = ms_info['X']
     y = ms_info['y']
@@ -442,7 +555,6 @@ def plot_roc(ms_info, pipeline, model_name, output_dir, n_splits=5, n_repeats=10
         # By default, the ROC curve is often computed for class 1 in binary classification (positive class),
         # treating class 0 as the negative class.
         y_score = pipeline.predict_proba(X_test)[:, 1]  # Get probabilities for class 1
-
         # Append true labels and scores
         all_y_true.extend(y_test)
         all_y_scores.extend(y_score)
@@ -666,6 +778,26 @@ def plot_SHAP(X, y, features, model, pipeline, output_dir, name):
     print(f"Combined SHAP plot saved as 'shap_combined_{name}_plots.png'")
 
 
+def save_best_model(model, output_path):
+    """
+    Save the trained model to a file using joblib.
+
+    Parameters:
+    -----------
+    model : scikit-learn compatible model
+        The trained model to save.
+
+    output_path : str
+        The directory path and filename to save the model.
+
+    Returns:
+    --------
+    None
+    """
+    joblib.dump(model, output_path)
+    print(f"Model saved successfully to {output_path}")
+
+
 """
 Function: run_models
 --------------------
@@ -740,6 +872,9 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice, nor
 
     for name, model, param_grid in list_of_models:
         print(f'Starting {name}')
+        # Create output directory for the current model
+        dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
+        dirpath.mkdir(parents=True, exist_ok=True)
 
         # Build the pipeline with optional transformations and feature reduction
         pipeline = Pipeline([
@@ -758,10 +893,12 @@ def run_models(ms_info, list_of_models, ms_file_name, feature_reduce_choice, nor
 
         # Update the pipeline with the best parameters
         pipeline.set_params(**best_params)
+        best_pipeline = grid_search.best_estimator_
 
-        # Create output directory for the current model
-        dirpath = Path(os.path.join(current_working_dir, f'output_{name}'))
-        dirpath.mkdir(parents=True, exist_ok=True)
+        # Save the trained model after grid search is done
+        model_output_path = os.path.join(dirpath, f"{name}_best_model.pkl")
+        print(f'{model_output_path}')
+        save_best_model(best_pipeline, model_output_path)
 
         # Save the best parameters to a JSON file
         with open(f'{dirpath}/best_params_{name}.json', 'w') as f:
@@ -953,14 +1090,35 @@ python ../../GridClassFinal.py  Grade_PP_filt_unnorm_9Sep2024.csv Boruta false t
 
 """
 
-import argparse
-
 if __name__ == "__main__":
-    """Main entry point for running regression models with feature reduction.
+    """
+    Main entry point for running regression models with feature reduction.
 
-    This script parses command-line arguments for input file paths, feature reduction methods,
-    and various processing options like transposition, normalization, and logarithmic transformation.
-    It then calls the main function to execute the regression modeling workflow.
+    This script parses command-line arguments that allow users to specify the input file path, 
+    choose feature reduction methods, and set various processing options like transposition, 
+    normalization, and logarithmic transformation of the data. Once the arguments are parsed, 
+    it calls the `main` function to execute the regression modeling workflow.
+
+    Command-line arguments:
+    ------------------------
+    ms_input_file : str
+        Path to the input CSV file containing the dataset.
+
+    feature_reduce_choice : str, optional
+        Choice of feature reduction method. If not provided, feature reduction will be skipped.
+
+    transpose : bool
+        Whether or not to transpose the input file (True for transposing, False otherwise).
+
+    norm : bool
+        Whether to apply normalization to the data (True for normalization, False otherwise).
+
+    log10 : bool
+        Whether to apply a log10 transformation to the input data (True for applying the log10, False otherwise).
+
+    Example usage:
+    --------------
+        python script_name.py input.csv pca true true false
     """
 
     parser = argparse.ArgumentParser(description='Run regression models with feature reduction.')
@@ -978,6 +1136,8 @@ if __name__ == "__main__":
     # Call the main function with parsed arguments
     main(args.ms_input_file, args.feature_reduce_choice, args.transpose, args.norm, args.log10)  # , args.set_seed
 
+
+#~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ Citations ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 # Define the citation dictionary
 citation_dict = {
     "json": "Built-in Python module, does not require a citation.",
