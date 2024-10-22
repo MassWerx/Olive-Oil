@@ -55,27 +55,27 @@ def run_command_and_harvest(command, top_level_directory, output_csv):
     print(f"Running command: {command}")
     subprocess.run(command)
 
-
-    base_dir = ".."
+    # Set base_dir to one level above top_level_directory
     # After command finishes, combine metrics files
-    print(f"Harvesting metrics from {base_dir} into {output_csv}")
-    combine_files_transposed_to_csv(base_dir, output_csv)
+    basedir = "./"
+    print(f"Harvesting metrics from {basedir} into {output_csv}")
+    combine_files_transposed_to_csv(basedir, output_csv)
 
 if __name__ == "__main__":
     # List of jobs and their corresponding directories and outputs
     # List of commands and their corresponding directories and outputs
     jobs = [
         {
-            'command': ['python', '../../GridClassFinal.py', 'Adult_CAN-MALDI_TAG_unnorm_8Sep2024.csv', 'Boruta',
+            'command': ['python', '../../GridClassFinal.py', 'Adult_CAN-MALDI_TAG_unnorm_8Oct2024.csv', 'Boruta',
                         'false', 'true', 'false'],
             'top_level_directory': '../Classification/oil/Adulteration_can',
-            'output_csv': 'adult_can_8Sep2024_metrics_scikit.csv'
+            'output_csv': 'adult_can_8Oct2024_metrics_scikit.csv'
         },
         {
-            'command': ['python', '../../GridClassFinal.py', 'Adult_SOY-MALDI_TAG_unnorm_8Sep2024.csv', 'Boruta',
+            'command': ['python', '../../GridClassFinal.py', 'Adult_SOY-MALDI_TAG_unnorm_8Oct2024.csv', 'Boruta',
                         'false', 'true', 'false'],
             'top_level_directory': '../Classification/oil/Adulteration_soy',
-            'output_csv': 'adult_soy_8Sep2024_metrics_scikit.csv'
+            'output_csv': 'adult_soy_8Oct2024_metrics_scikit.csv'
         },
         {
             'command': ['python', '../../GridClassFinal.py', 'Freshness_PP_filt_unnorm_9Sep2024.csv', 'Boruta', 'false',

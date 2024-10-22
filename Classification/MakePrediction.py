@@ -215,17 +215,17 @@ def run_shap_analysis(loaded_models, sample_updated_dataframe, new_debug_dir):
                         # In case Reduction doesn't expose `support_`, you can just wrap the array in a DataFrame
                         preprocessed_sample = pd.DataFrame(preprocessed_sample)
 
-                    print(f' After reduction:\n{preprocessed_sample} , \nwith shap {preprocessed_sample.shape}')
+                    print("After reduction:", preprocessed_sample.shape)
                 # At this point, `preprocessed_sample` has updated feature names based on reduction
 
                 # Extract the classifier from the pipeline
                 classifier = model.named_steps['classifier']
 
                 # Create SHAP explainer based on the classifier type
-                if isinstance(classifier, (RandomForestClassifier, GradientBoostingClassifier, AdaBoostClassifier)):
+                if isinstance(classifier, (RandomForestClassifier, GradientBoostingClassifier)):
                     explainer = shap.TreeExplainer(classifier)
                 elif isinstance(classifier, LogisticRegression):
-                    explainer = shap.LinearExplainer(classifier, preprocessed_sample)
+                    explainer = shap.LinearExplainer(classifier, preprocessed_sample, model_output='probability')
                 else:
                     explainer = shap.KernelExplainer(classifier.predict, preprocessed_sample)
 
@@ -238,6 +238,7 @@ def run_shap_analysis(loaded_models, sample_updated_dataframe, new_debug_dir):
                 shap.summary_plot(shap_values, preprocessed_sample, show=False)
                 plt.savefig(shap_plot_path)
                 plt.close()
+
 
                 print(f"SHAP plot saved for {model_name} on {sample_file}")
 

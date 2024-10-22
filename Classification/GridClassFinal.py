@@ -384,7 +384,7 @@ class MyKerasClf(BaseEstimator, ClassifierMixin):
         self.input_shape = X.shape[1]
         self.classes_ = np.unique(y)
         n_neurons = kwargs.get('n_neurons', self.n_neurons)
-        print(f"Fitting with parameters: n_neurons={n_neurons}")
+        # print(f"Fitting with parameters: n_neurons={n_neurons}")
         self.clf = KerasClassifier(model=self.create_model(n_neurons=n_neurons),  verbose=0, epochs=220, batch_size=100)
 
         self.clf.fit(X, y, **kwargs)
@@ -544,7 +544,7 @@ def plot_roc(ms_info, pipeline, model_name, output_dir, n_splits=5, n_repeats=10
 
     # Perform cross-validation
     for fold_idx, (train_idx, test_idx) in enumerate(outer_cv.split(X, y), 1):
-        print(f'Processing fold {fold_idx}')
+        # print(f'Processing fold {fold_idx}')
 
         # Split data into training and testing sets
         X_train, X_test = X.iloc[train_idx], X.iloc[test_idx]
